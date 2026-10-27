@@ -31,6 +31,7 @@ internal sealed class TableScaleGuard
             };
         events.OnChange += handler;
         _subscriptions[key] = (events, handler);
+        AddinLog.Write("Контроль масштаба подключён: " + document.DisplayName);
     }
 
     public void DetachAll()
@@ -63,7 +64,10 @@ internal sealed class TableScaleGuard
                 foreach (SketchedSymbol symbol in sheet.SketchedSymbols)
                 {
                     if (Math.Abs(symbol.Scale - 1.0) > Tolerance && TableStorage.IsTable(symbol.Definition))
+                    {
+                        AddinLog.Write($"Масштаб таблицы {symbol.Definition.Name} {symbol.Scale} -> 1");
                         symbol.Scale = 1.0;
+                    }
                 }
             }
         }

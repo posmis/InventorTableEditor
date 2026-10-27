@@ -36,7 +36,8 @@ public class StandardAddInServer : ApplicationAddInServer
     {
         try
         {
-            AddinLog.Write($"Загрузка аддина, firstTime={firstTime}");
+            var assembly = typeof(StandardAddInServer).Assembly.Location;
+            AddinLog.Write($"Загрузка аддина, firstTime={firstTime}, сборка {assembly} от {System.IO.File.GetLastWriteTime(assembly):yyyy-MM-dd HH:mm:ss}");
             _inventor = addInSiteObject.Application;
             _commands = new TableCommands(_inventor);
 

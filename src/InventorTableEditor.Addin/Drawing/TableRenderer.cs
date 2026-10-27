@@ -106,7 +106,20 @@ internal static class TableRenderer
             AddinLog.Write($"AddFitted не принял форматированный текст ({ex.Message}): {formatted}");
         }
 
-        var textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')));
+        Inventor.TextBox textBox;
+        try
+        {
+            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')));
+        }
+        catch (Exception ex)
+        {
+            // Последняя попытка: явно передать стиль текста примечаний из активного стандарта.
+            AddinLog.Write($"AddFitted не принял и простой текст ({ex.Message}), пробую со стилем текста.");
+            var document = (DrawingDocument)((dynamic)sketch.Parent).Parent;
+            var textStyle = document.StylesManager.ActiveStandardStyle.ActiveObjectDefaults.GeneralNoteStyle;
+            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')), textStyle);
+        }
+
         try
         {
             textBox.FormattedText = formatted;

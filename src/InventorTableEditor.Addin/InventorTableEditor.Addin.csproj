@@ -50,7 +50,7 @@
     <ItemGroup>
       <AddinFiles Include="$(OutDir)**\*.*" />
     </ItemGroup>
-    <Copy SourceFiles="@(AddinFiles)" DestinationFiles="@(AddinFiles->'$(AddinDeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Copy SourceFiles="@(AddinFiles)" DestinationFiles="@(AddinFiles->'$(AddinDeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Message Importance="high" Text="Аддин скопирован в $(AddinDeployDir)" />
   </Target>
 
