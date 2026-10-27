@@ -77,7 +77,7 @@ internal static class TableRenderer
             };
             var origin = Point(geometry, x, cell.Top + cell.Height / 2);
 
-            var textBox = sketch.TextBoxes.AddFitted(origin, FormatText(cell.Text, style));
+            var textBox = AddText(sketch, origin, cell.Text, style);
             textBox.HorizontalJustification = cell.Alignment switch
             {
                 TextAlignment.Center => HorizontalTextAlignmentEnum.kAlignTextCenter,
@@ -88,6 +88,35 @@ internal static class TableRenderer
             // После смены выравнивания точка привязки задаётся заново.
             textBox.Origin = origin;
         }
+    }
+
+    /// <summary>
+    /// Создаёт надпись. Если Inventor не принял форматированный текст, создаёт надпись простым текстом
+    /// и применяет форматирование отдельно, чтобы текст в таблице появился в любом случае.
+    /// </summary>
+    private static Inventor.TextBox AddText(DrawingSketch sketch, Point2d origin, string text, TableStyle style)
+    {
+        var formatted = FormatText(text, style);
+        try
+        {
+            return sketch.TextBoxes.AddFitted(origin, formatted);
+        }
+        catch (Exception ex)
+        {
+            AddinLog.Write($"AddFitted не принял форматированный текст ({ex.Message}): {formatted}");
+        }
+
+        var textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')));
+        try
+        {
+            textBox.FormattedText = formatted;
+        }
+        catch (Exception ex)
+        {
+            AddinLog.Write($"FormattedText не принят ({ex.Message}), надпись оставлена со стилем по умолчанию.");
+        }
+
+        return textBox;
     }
 
     /// <summary>Форматированный текст Inventor: шрифт и стиль, строки через &lt;Br/&gt;.</summary>
@@ -103,8 +132,8 @@ internal static class TableRenderer
         }
 
         var fontSizeCm = Units.MmToCm(style.FontSizeMm).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return $"<StyleOverride Font='{SecurityElement.Escape(style.FontName)}' FontSize='{fontSizeCm}'"
-               + $" Italic='{(style.Italic ? "True" : "False")}'>{body}</StyleOverride>";
+        var italic = style.Italic ? " Italic='True'" : string.Empty;
+        return $"<StyleOverride Font='{SecurityElement.Escape(style.FontName)}' FontSize='{fontSizeCm}'{italic}>{body}</StyleOverride>";
     }
 
     /// <summary>Точка эскиза: мм с осью Y вниз → см Inventor с осью Y вверх.</summary>
