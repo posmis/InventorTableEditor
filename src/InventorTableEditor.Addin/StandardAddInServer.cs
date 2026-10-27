@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Inventor;
+using InventorTableEditor.Addin.Drawing;
 using InventorTableEditor.Addin.UI;
 
 namespace InventorTableEditor.Addin;
@@ -20,6 +21,8 @@ public class StandardAddInServer : ApplicationAddInServer
 
     /// <summary>Вкладки, на которые панель уже добавлена (по внутреннему имени).</summary>
     private readonly HashSet<string> _tabsWithPanel = new();
+
+    private readonly TableScaleGuard _scaleGuard = new();
 
     private Inventor.Application? _inventor;
     private TableCommands? _commands;
@@ -63,6 +66,9 @@ public class StandardAddInServer : ApplicationAddInServer
             _userInterfaceEvents.OnResetRibbonInterface += OnResetRibbonInterface;
 
             AddRibbonPanels();
+
+            if (_inventor.ActiveDocument is DrawingDocument activeDrawing)
+                _scaleGuard.Attach(activeDrawing);
         }
         catch (Exception ex)
         {
@@ -88,8 +94,21 @@ public class StandardAddInServer : ApplicationAddInServer
     private void OnActivateDocument(_Document documentObject, EventTimingEnum beforeOrAfter, NameValueMap context, out HandlingCodeEnum handlingCode)
     {
         handlingCode = HandlingCodeEnum.kEventNotHandled;
-        if (beforeOrAfter == EventTimingEnum.kAfter)
-            AddRibbonPanels();
+        if (beforeOrAfter != EventTimingEnum.kAfter)
+            return;
+
+        AddRibbonPanels();
+        if (documentObject is DrawingDocument drawing)
+        {
+            try
+            {
+                _scaleGuard.Attach(drawing);
+            }
+            catch (Exception ex)
+            {
+                AddinLog.Write("Не удалось подписаться на изменения чертежа: " + ex.Message);
+            }
+        }
     }
 
     private void OnResetRibbonInterface(NameValueMap context)
@@ -176,6 +195,8 @@ public class StandardAddInServer : ApplicationAddInServer
 
         if (_applicationEvents != null)
             _applicationEvents.OnActivateDocument -= OnActivateDocument;
+
+        _scaleGuard.DetachAll();
 
         if (_userInterfaceEvents != null)
             _userInterfaceEvents.OnResetRibbonInterface -= OnResetRibbonInterface;
