@@ -2,13 +2,6 @@ using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Core.Layout;
 
-public enum TextAlignment
-{
-    Left,
-    Center,
-    Right,
-}
-
 /// <summary>Отрезок линии таблицы. Координаты в мм от левого верхнего угла, Y вниз.</summary>
 public sealed record LineSegment(double X1, double Y1, double X2, double Y2, double WeightMm);
 
@@ -22,7 +15,7 @@ public sealed record TextSegment(IReadOnlyList<TextRun> Runs, ScriptPosition Scr
 public sealed record TextLine(IReadOnlyList<TextSegment> Segments, double BaselineMm, double FontSizeMm);
 
 /// <summary>Ячейка с текстом. Координаты в мм от левого верхнего угла, Y вниз.</summary>
-public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height, IReadOnlyList<TextLine> Lines, TextAlignment Alignment);
+public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height, IReadOnlyList<TextLine> Lines, HorizontalTextAlignment Alignment);
 
 /// <summary>
 /// Геометрия таблицы для вывода в чертёж: границы столбцов и строк, линии и тексты.
@@ -83,10 +76,16 @@ public sealed class TableLayout
         return source.Count > 0 ? source.Max(r => r.FontSizeMm ?? style.FontSizeMm) : style.FontSizeMm;
     }
 
-    private static List<TextLine> LayoutLines(TableCell cell, TableStyle style, double cellTop, double cellHeight)
+    private static List<TextLine> LayoutLines(TableCell cell, TableStyle style, double cellTop, double cellHeight, VerticalTextAlignment alignment)
     {
         var lines = cell.SplitLines();
-        var blockTop = cellTop + (cellHeight - BlockHeight(cell, style)) / 2;
+        var blockHeight = BlockHeight(cell, style);
+        var blockTop = alignment switch
+        {
+            VerticalTextAlignment.Top => cellTop + style.PaddingMm,
+            VerticalTextAlignment.Bottom => cellTop + cellHeight - style.PaddingMm - blockHeight,
+            _ => cellTop + (cellHeight - blockHeight) / 2,
+        };
 
         var result = new List<TextLine>();
         var baseline = blockTop;
@@ -166,11 +165,11 @@ public sealed class TableLayout
                 if (cell.IsEmpty)
                     continue;
 
-                var alignment = model.IsHeaderRow(r) ? TextAlignment.Center : TextAlignment.Left;
+                var alignment = model.GetHorizontalAlignment(r, c);
                 var top = rowEdges[r];
                 var cellHeight = rowEdges[r + 1] - top;
                 texts.Add(new CellText(r, c, columnEdges[c], top, columnEdges[c + 1] - columnEdges[c], cellHeight,
-                    LayoutLines(cell, style, top, cellHeight), alignment));
+                    LayoutLines(cell, style, top, cellHeight, model.GetVerticalAlignment(r, c)), alignment));
             }
         }
 

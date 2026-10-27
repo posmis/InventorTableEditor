@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -27,6 +28,12 @@ internal sealed class TableEditorWindow : Window
     private int _row;
     private int _column;
     private RichTextBox? _activeEditor;
+
+    private readonly ComboBox _fontBox = new() { Width = 170, IsEditable = true, ToolTip = "Шрифт" };
+    private readonly ComboBox _sizeBox = new() { Width = 60, IsEditable = true, ToolTip = "Высота шрифта, мм" };
+
+    /// <summary>Списки шрифта и размера обновляются из выделения — в это время их события игнорируются.</summary>
+    private bool _syncingFormat;
 
     public TableEditorWindow(TableModel model, bool isNew)
     {
@@ -86,6 +93,10 @@ internal sealed class TableEditorWindow : Window
     private ToolBarTray BuildFormatBar()
     {
         var bar = new ToolBar();
+        SetupFontBoxes();
+        bar.Items.Add(_fontBox);
+        bar.Items.Add(_sizeBox);
+        bar.Items.Add(new Separator());
         bar.Items.Add(FormatButton("Ж", "Жирный (Ctrl+B)", () => Execute(EditingCommands.ToggleBold), b => b.FontWeight = FontWeights.Bold));
         bar.Items.Add(FormatButton("К", "Курсив (Ctrl+I)", () => Execute(EditingCommands.ToggleItalic), b => b.FontStyle = FontStyles.Italic));
         bar.Items.Add(FormatButton("Ч", "Подчёркнутый (Ctrl+U)", () => Execute(EditingCommands.ToggleUnderline),
@@ -93,6 +104,21 @@ internal sealed class TableEditorWindow : Window
         bar.Items.Add(new Separator());
         bar.Items.Add(FormatButton("x²", "Надстрочный (Ctrl+Shift+=)", () => ToggleScript(BaselineAlignment.Superscript), null));
         bar.Items.Add(FormatButton("x₂", "Подстрочный (Ctrl+=)", () => ToggleScript(BaselineAlignment.Subscript), null));
+
+        bar.Items.Add(new Separator());
+        bar.Items.Add(FormatButton("", "По левому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Left),
+            b => b.Content = AlignmentIcons.Horizontal(HorizontalTextAlignment.Left)));
+        bar.Items.Add(FormatButton("", "По центру", () => SetHorizontalAlignment(HorizontalTextAlignment.Center),
+            b => b.Content = AlignmentIcons.Horizontal(HorizontalTextAlignment.Center)));
+        bar.Items.Add(FormatButton("", "По правому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Right),
+            b => b.Content = AlignmentIcons.Horizontal(HorizontalTextAlignment.Right)));
+        bar.Items.Add(new Separator());
+        bar.Items.Add(FormatButton("", "По верхнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Top),
+            b => b.Content = AlignmentIcons.Vertical(VerticalTextAlignment.Top)));
+        bar.Items.Add(FormatButton("", "По середине", () => SetVerticalAlignment(VerticalTextAlignment.Middle),
+            b => b.Content = AlignmentIcons.Vertical(VerticalTextAlignment.Middle)));
+        bar.Items.Add(FormatButton("", "По нижнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Bottom),
+            b => b.Content = AlignmentIcons.Vertical(VerticalTextAlignment.Bottom)));
         return new ToolBarTray { Margin = new Thickness(0, 0, 0, 8), ToolBars = { bar } };
     }
 
@@ -110,6 +136,140 @@ internal sealed class TableEditorWindow : Window
         decorate?.Invoke(button);
         button.Click += (_, _) => action();
         return button;
+    }
+
+    private void SetupFontBoxes()
+    {
+        foreach (var name in Fonts.SystemFontFamilies.Select(f => f.Source).Append(Model.Style.FontName).Distinct().OrderBy(n => n))
+            _fontBox.Items.Add(name);
+        foreach (var size in new[] { 2.5, 3.5, 5, 7, 10, 14 })
+            _sizeBox.Items.Add(size.ToString("0.#", CultureInfo.CurrentCulture));
+
+        _fontBox.Text = Model.Style.FontName;
+        _sizeBox.Text = Model.Style.FontSizeMm.ToString("0.#", CultureInfo.CurrentCulture);
+
+        _fontBox.SelectionChanged += (_, _) =>
+        {
+            if (!_syncingFormat && _fontBox.SelectedItem is string name)
+                ApplyFont(name);
+        };
+        _sizeBox.SelectionChanged += (_, _) =>
+        {
+            if (!_syncingFormat && _sizeBox.SelectedItem is string size)
+                ApplySize(size);
+        };
+        _fontBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyFont(_fontBox.Text);
+                e.Handled = true;
+            }
+        };
+        _sizeBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplySize(_sizeBox.Text);
+                e.Handled = true;
+            }
+        };
+    }
+
+    private void ApplyFont(string name)
+    {
+        if (_activeEditor == null || string.IsNullOrWhiteSpace(name))
+            return;
+
+        _activeEditor.Selection.ApplyPropertyValue(TextElement.FontFamilyProperty, RichTextConverter.FontFor(name.Trim()));
+        _activeEditor.Focus();
+    }
+
+    /// <summary>Задаёт высоту основного текста; индексы в выделении остаются уменьшенными.</summary>
+    private void ApplySize(string text)
+    {
+        if (_activeEditor == null || !TryParseMm(text, 0.5, 100, out var sizeMm))
+            return;
+
+        var px = sizeMm * PxPerMm * RichTextConverter.EmPerTextHeight;
+        var selection = _activeEditor.Selection;
+        selection.ApplyPropertyValue(TextElement.FontSizeProperty, px);
+
+        foreach (var run in RichTextConverter.EnumerateRuns(_activeEditor.Document))
+        {
+            var overlaps = run.ContentStart.CompareTo(selection.End) < 0 && run.ContentEnd.CompareTo(selection.Start) > 0;
+            if (overlaps && RichTextConverter.ScriptOf(run) != ScriptPosition.Normal)
+                run.FontSize = px * Model.Style.ScriptScale;
+        }
+
+        _activeEditor.Focus();
+    }
+
+    private void SetHorizontalAlignment(HorizontalTextAlignment alignment)
+    {
+        if (_activeEditor == null)
+            return;
+
+        Model.GetCell(_row, _column).HorizontalAlignment = alignment;
+        var wpfAlignment = ToWpf(alignment);
+        _activeEditor.Document.TextAlignment = wpfAlignment;
+        foreach (var block in _activeEditor.Document.Blocks)
+            block.TextAlignment = wpfAlignment;
+        _activeEditor.Focus();
+    }
+
+    private void SetVerticalAlignment(VerticalTextAlignment alignment)
+    {
+        if (_activeEditor == null)
+            return;
+
+        Model.GetCell(_row, _column).VerticalAlignment = alignment;
+        _activeEditor.VerticalAlignment = ToWpf(alignment);
+        _activeEditor.Focus();
+    }
+
+    private static System.Windows.TextAlignment ToWpf(HorizontalTextAlignment alignment) => alignment switch
+    {
+        HorizontalTextAlignment.Center => System.Windows.TextAlignment.Center,
+        HorizontalTextAlignment.Right => System.Windows.TextAlignment.Right,
+        _ => System.Windows.TextAlignment.Left,
+    };
+
+    private static VerticalAlignment ToWpf(VerticalTextAlignment alignment) => alignment switch
+    {
+        VerticalTextAlignment.Top => VerticalAlignment.Top,
+        VerticalTextAlignment.Bottom => VerticalAlignment.Bottom,
+        _ => VerticalAlignment.Center,
+    };
+
+    /// <summary>Показывает в списках шрифт и размер текста под курсором или выделенного.</summary>
+    private void SyncFormatBoxes()
+    {
+        if (_activeEditor == null)
+            return;
+
+        var selection = _activeEditor.Selection;
+        _syncingFormat = true;
+        try
+        {
+            _fontBox.Text = selection.GetPropertyValue(TextElement.FontFamilyProperty) is FontFamily family
+                ? RichTextConverter.FontNameOf(family)
+                : string.Empty;
+
+            var script = selection.GetPropertyValue(Inline.BaselineAlignmentProperty) switch
+            {
+                BaselineAlignment.Superscript => ScriptPosition.Superscript,
+                BaselineAlignment.Subscript => ScriptPosition.Subscript,
+                _ => ScriptPosition.Normal,
+            };
+            _sizeBox.Text = selection.GetPropertyValue(TextElement.FontSizeProperty) is double px
+                ? RichTextConverter.TextHeightMm(px, script, Model.Style, PxPerMm).ToString("0.#", CultureInfo.CurrentCulture)
+                : string.Empty;
+        }
+        finally
+        {
+            _syncingFormat = false;
+        }
     }
 
     private void Execute(RoutedUICommand command)
@@ -131,11 +291,18 @@ internal sealed class TableEditorWindow : Window
             return;
 
         var selection = _activeEditor.Selection;
-        var isOn = selection.GetPropertyValue(Inline.BaselineAlignmentProperty) is BaselineAlignment current && current == target;
-        var baseSize = RichTextConverter.BaseFontSizePx(Model.Style, PxPerMm);
+        var current = selection.GetPropertyValue(Inline.BaselineAlignmentProperty) as BaselineAlignment?;
+        var isOn = current == target;
+        var wasScript = current is BaselineAlignment.Superscript or BaselineAlignment.Subscript;
+        var scale = Model.Style.ScriptScale;
+
+        // Размер основного текста выделения: у индекса он хранится уменьшенным.
+        var mainSize = selection.GetPropertyValue(TextElement.FontSizeProperty) is double size
+            ? (wasScript ? size / scale : size)
+            : RichTextConverter.BaseFontSizePx(Model.Style, PxPerMm);
 
         selection.ApplyPropertyValue(Inline.BaselineAlignmentProperty, isOn ? BaselineAlignment.Baseline : target);
-        selection.ApplyPropertyValue(TextElement.FontSizeProperty, isOn ? baseSize : baseSize * Model.Style.ScriptScale);
+        selection.ApplyPropertyValue(TextElement.FontSizeProperty, isOn ? mainSize : mainSize * scale);
         _activeEditor.Focus();
     }
 
@@ -238,8 +405,10 @@ internal sealed class TableEditorWindow : Window
             RebuildGrid();
     }
 
-    private static bool TryParseMm(string text, out double value) =>
-        double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= 2 && value <= 1000;
+    private static bool TryParseMm(string text, out double value) => TryParseMm(text, 2, 1000, out value);
+
+    private static bool TryParseMm(string text, double min, double max, out double value) =>
+        double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min && value <= max;
 
     private void RebuildGrid()
     {
@@ -271,10 +440,12 @@ internal sealed class TableEditorWindow : Window
                 var border = new Border
                 {
                     BorderBrush = Brushes.Black,
-                    Background = Brushes.White,
+                    Background = cell.Background,
                     BorderThickness = new Thickness(c == 0 ? outer : 0, r == 0 ? outer : 0, c == Model.ColumnCount - 1 ? outer : inner, bottom),
                     Child = cell,
                 };
+                // Щелчок по пустому месту ячейки (текст выровнен вверх или вниз) ставит курсор в ячейку.
+                border.MouseLeftButtonDown += (_, _) => cell.Focus();
                 Grid.SetRow(border, r);
                 Grid.SetColumn(border, c);
                 _grid.Children.Add(border);
@@ -292,24 +463,31 @@ internal sealed class TableEditorWindow : Window
     private RichTextBox CreateCell(int row, int column)
     {
         var style = Model.Style;
-        var alignment = Model.IsHeaderRow(row) ? System.Windows.TextAlignment.Center : System.Windows.TextAlignment.Left;
+        var alignment = ToWpf(Model.GetHorizontalAlignment(row, column));
         var box = new RichTextBox
         {
             Document = RichTextConverter.ToDocument(Model.GetCell(row, column), style, PxPerMm, alignment),
             AcceptsReturn = true,
             BorderThickness = new Thickness(0),
             Background = Model.IsHeaderRow(row) ? new SolidColorBrush(Color.FromRgb(0xF3, 0xF6, 0xFA)) : Brushes.White,
-            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalAlignment = ToWpf(Model.GetVerticalAlignment(row, column)),
             Padding = new Thickness(style.PaddingMm * PxPerMm, 0, style.PaddingMm * PxPerMm, 0),
         };
 
-        box.TextChanged += (_, _) => Model.SetCell(row, column, RichTextConverter.FromDocument(box.Document, style));
+        box.TextChanged += (_, _) =>
+            Model.SetCell(row, column, RichTextConverter.FromDocument(box.Document, style, PxPerMm, Model.GetCell(row, column)));
+        box.SelectionChanged += (_, _) =>
+        {
+            if (box == _activeEditor)
+                SyncFormatBoxes();
+        };
         box.GotKeyboardFocus += (_, _) =>
         {
             _row = row;
             _column = column;
             _activeEditor = box;
             UpdateSizeBoxes();
+            SyncFormatBoxes();
         };
         box.PreviewKeyDown += CellPreviewKeyDown;
         return box;

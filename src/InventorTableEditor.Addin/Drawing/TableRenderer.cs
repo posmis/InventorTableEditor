@@ -8,6 +8,7 @@ using Inventor;
 using InventorTableEditor.Core;
 using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
+using HorizontalTextAlignment = InventorTableEditor.Core.Model.HorizontalTextAlignment;
 using TableStyle = InventorTableEditor.Core.Model.TableStyle;
 
 namespace InventorTableEditor.Addin.Drawing;
@@ -95,8 +96,8 @@ internal static class TableRenderer
 
             var left = cell.Alignment switch
             {
-                TextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
-                TextAlignment.Right => cell.Left + cell.Width - style.PaddingMm - lineWidth,
+                HorizontalTextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
+                HorizontalTextAlignment.Right => cell.Left + cell.Width - style.PaddingMm - lineWidth,
                 _ => cell.Left + style.PaddingMm,
             };
 

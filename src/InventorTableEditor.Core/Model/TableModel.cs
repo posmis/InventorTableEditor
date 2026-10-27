@@ -110,6 +110,13 @@ public sealed class TableModel
 
     public bool IsHeaderRow(int row) => HasHeader && row == 0;
 
+    /// <summary>Выравнивание ячейки по горизонтали с учётом умолчаний: заголовки по центру, данные слева.</summary>
+    public HorizontalTextAlignment GetHorizontalAlignment(int row, int column) =>
+        Cells[row][column].HorizontalAlignment ?? (IsHeaderRow(row) ? HorizontalTextAlignment.Center : HorizontalTextAlignment.Left);
+
+    public VerticalTextAlignment GetVerticalAlignment(int row, int column) =>
+        Cells[row][column].VerticalAlignment ?? VerticalTextAlignment.Middle;
+
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     public static TableModel FromJson(string json)

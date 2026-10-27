@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Documents;
@@ -42,9 +43,17 @@ internal static class RichTextConverter
         };
     }
 
-    public static TableCell FromDocument(FlowDocument document, TableStyle style)
+    /// <summary>
+    /// Читает ячейку из документа редактора. Выравнивание берётся из <paramref name="previous"/>:
+    /// оно задаётся кнопками, а не текстом.
+    /// </summary>
+    public static TableCell FromDocument(FlowDocument document, TableStyle style, double pxPerMm, TableCell previous)
     {
-        var cell = new TableCell();
+        var cell = new TableCell
+        {
+            HorizontalAlignment = previous.HorizontalAlignment,
+            VerticalAlignment = previous.VerticalAlignment,
+        };
         var first = true;
         foreach (var block in document.Blocks)
         {
@@ -53,7 +62,7 @@ internal static class RichTextConverter
             first = false;
 
             if (block is Paragraph paragraph)
-                ReadInlines(paragraph.Inlines, cell, style);
+                ReadInlines(paragraph.Inlines, cell, style, pxPerMm);
         }
 
         cell.Normalize();
@@ -61,6 +70,18 @@ internal static class RichTextConverter
     }
 
     public static FontFamily FontFor(string fontName) => new(fontName + ", ISOCPEUR, GOST type A, Arial");
+
+    /// <summary>Основной шрифт из семейства вида «Имя, запасной1, запасной2».</summary>
+    public static string FontNameOf(FontFamily family) => family.Source.Split(',')[0].Trim();
+
+    /// <summary>Высота основного текста в мм по размеру шрифта WPF (для индекса — до уменьшения), с точностью 0,1 мм.</summary>
+    public static double TextHeightMm(double fontSizePx, ScriptPosition script, TableStyle style, double pxPerMm)
+    {
+        var size = fontSizePx / (pxPerMm * EmPerTextHeight);
+        if (script != ScriptPosition.Normal)
+            size /= style.ScriptScale;
+        return System.Math.Round(size, 1);
+    }
 
     private static Run CreateRun(string text, TextRun source, TableStyle style, double pxPerMm)
     {
@@ -85,39 +106,71 @@ internal static class RichTextConverter
         return run;
     }
 
-    private static void ReadInlines(InlineCollection inlines, TableCell cell, TableStyle style)
+    private static void ReadInlines(InlineCollection inlines, TableCell cell, TableStyle style, double pxPerMm)
     {
         foreach (var inline in inlines)
         {
             switch (inline)
             {
                 case Run run:
+                    var script = ScriptOf(run);
+                    var fontName = FontNameOf(run.FontFamily);
+                    var sizeMm = TextHeightMm(run.FontSize, script, style, pxPerMm);
                     cell.Runs.Add(new TextRun(run.Text)
                     {
                         Bold = run.FontWeight.ToOpenTypeWeight() >= FontWeights.SemiBold.ToOpenTypeWeight(),
                         Italic = run.FontStyle != FontStyles.Normal,
                         Underline = HasUnderline(run),
-                        Script = ScriptOf(run),
+                        Script = script,
+                        FontName = string.Equals(fontName, style.FontName, System.StringComparison.OrdinalIgnoreCase) ? null : fontName,
+                        FontSizeMm = System.Math.Abs(sizeMm - style.FontSizeMm) < 0.05 ? null : sizeMm,
                     });
                     break;
                 case LineBreak:
                     AppendLineBreak(cell, style);
                     break;
                 case Span span:
-                    ReadInlines(span.Inlines, cell, style);
+                    ReadInlines(span.Inlines, cell, style, pxPerMm);
                     break;
             }
         }
     }
 
     /// <summary>Перенос строки берёт форматирование предыдущего фрагмента, чтобы не дробить фрагменты.</summary>
+    /// <summary>Все фрагменты текста документа по порядку.</summary>
+    public static IEnumerable<Run> EnumerateRuns(FlowDocument document)
+    {
+        foreach (var block in document.Blocks)
+        {
+            if (block is Paragraph paragraph)
+            {
+                foreach (var run in EnumerateRuns(paragraph.Inlines))
+                    yield return run;
+            }
+        }
+    }
+
+    private static IEnumerable<Run> EnumerateRuns(InlineCollection inlines)
+    {
+        foreach (var inline in inlines)
+        {
+            if (inline is Run run)
+                yield return run;
+            else if (inline is Span span)
+            {
+                foreach (var inner in EnumerateRuns(span.Inlines))
+                    yield return inner;
+            }
+        }
+    }
+
     private static void AppendLineBreak(TableCell cell, TableStyle style)
     {
         var format = cell.Runs.Count > 0 ? cell.Runs[^1] : new TextRun(string.Empty, style.Italic);
         cell.Runs.Add(format.WithText("\n"));
     }
 
-    private static ScriptPosition ScriptOf(Inline inline)
+    public static ScriptPosition ScriptOf(Inline inline)
     {
         for (DependencyObject? current = inline; current is Inline element; current = element.Parent)
         {

@@ -55,8 +55,8 @@ public class TableLayoutTests
 
         var layout = TableLayout.Build(model);
 
-        Assert.Equal(TextAlignment.Center, layout.Texts.Single(t => t.Row == 0).Alignment);
-        Assert.Equal(TextAlignment.Left, layout.Texts.Single(t => t.Row == 1).Alignment);
+        Assert.Equal(HorizontalTextAlignment.Center, layout.Texts.Single(t => t.Row == 0).Alignment);
+        Assert.Equal(HorizontalTextAlignment.Left, layout.Texts.Single(t => t.Row == 1).Alignment);
         Assert.Equal(8.0, layout.Texts.Single(t => t.Row == 1).Top);
     }
 
@@ -98,5 +98,55 @@ public class TableLayoutTests
         Assert.Equal("a", lines[0].Segments.Single().Runs.Single().Text);
         Assert.Equal(new[] { ScriptPosition.Normal, ScriptPosition.Superscript }, lines[1].Segments.Select(s => s.Script));
         Assert.Equal(5 * 1.6, lines[1].BaselineMm - lines[0].BaselineMm, 6);
+    }
+
+    [Theory]
+    [InlineData(VerticalTextAlignment.Top, 1 + 5)]
+    [InlineData(VerticalTextAlignment.Middle, 7.5 + 5)]
+    [InlineData(VerticalTextAlignment.Bottom, 20 - 1)]
+    public void Build_VerticalAlignment(VerticalTextAlignment alignment, double expectedBaseline)
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.RowHeights[0] = 20;
+        model.SetText(0, 0, "A");
+        model.GetCell(0, 0).VerticalAlignment = alignment;
+
+        var line = TableLayout.Build(model).Texts.Single().Lines.Single();
+
+        Assert.Equal(expectedBaseline, line.BaselineMm, 6);
+    }
+
+    [Fact]
+    public void Build_ExplicitAlignmentOverridesHeaderDefault()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetHeader(true);
+        model.SetText(0, 0, "Заголовок");
+        model.GetCell(0, 0).HorizontalAlignment = HorizontalTextAlignment.Right;
+
+        Assert.Equal(HorizontalTextAlignment.Right, TableLayout.Build(model).Texts.Single().Alignment);
+    }
+
+    [Fact]
+    public void Build_RunFontSizeChangesLineHeightAndScriptSize()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetCell(0, 0, new TableCell
+        {
+            Runs =
+            {
+                new TextRun("A") { FontSizeMm = 10 },
+                new TextRun("2") { FontSizeMm = 10, Script = ScriptPosition.Superscript },
+            },
+        });
+
+        var layout = TableLayout.Build(model);
+        var line = layout.Texts.Single().Lines.Single();
+
+        // 10 мм текста + 2 * 1 мм отступов > 8 мм заданной высоты.
+        Assert.Equal(12.0, layout.Height, 6);
+        Assert.Equal(10.0, line.FontSizeMm, 6);
+        Assert.Equal(6.5, line.Segments[1].FontSizeMm, 6);
+        Assert.Equal(line.BaselineMm - 5, line.Segments[1].BaselineMm, 6);
     }
 }

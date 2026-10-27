@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace InventorTableEditor.Core.Model;
 
 /// <summary>
@@ -6,6 +8,14 @@ namespace InventorTableEditor.Core.Model;
 public sealed class TableCell
 {
     public List<TextRun> Runs { get; set; } = new();
+
+    /// <summary>null — по умолчанию: заголовки по центру, данные слева.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HorizontalTextAlignment? HorizontalAlignment { get; set; }
+
+    /// <summary>null — по умолчанию: по центру.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VerticalTextAlignment? VerticalAlignment { get; set; }
 
     public string PlainText => string.Concat(Runs.Select(r => r.Text));
 
@@ -20,7 +30,12 @@ public sealed class TableCell
         return cell;
     }
 
-    public TableCell Clone() => new() { Runs = Runs.Select(r => r.Clone()).ToList() };
+    public TableCell Clone() => new()
+    {
+        Runs = Runs.Select(r => r.Clone()).ToList(),
+        HorizontalAlignment = HorizontalAlignment,
+        VerticalAlignment = VerticalAlignment,
+    };
 
     /// <summary>
     /// Нормализует фрагменты: единые переносы строк, без пустых фрагментов,
