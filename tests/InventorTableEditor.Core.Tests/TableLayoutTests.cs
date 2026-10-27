@@ -59,4 +59,44 @@ public class TableLayoutTests
         Assert.Equal(TextAlignment.Left, layout.Texts.Single(t => t.Row == 1).Alignment);
         Assert.Equal(8.0, layout.Texts.Single(t => t.Row == 1).Top);
     }
+
+    [Fact]
+    public void Build_PlacesSuperscriptAndSubscript()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetCell(0, 0, new TableCell
+        {
+            Runs =
+            {
+                new TextRun("R"),
+                new TextRun("1") { Script = ScriptPosition.Subscript },
+                new TextRun("x"),
+                new TextRun("2") { Script = ScriptPosition.Superscript },
+            },
+        });
+
+        var line = TableLayout.Build(model).Texts.Single().Lines.Single();
+
+        Assert.Equal(4, line.Segments.Count);
+        // Одна строка размером 5 мм по центру ячейки высотой 8 мм: базовая линия на 1.5 + 5.
+        Assert.Equal(6.5, line.BaselineMm, 6);
+        Assert.Equal(6.5, line.Segments[0].BaselineMm, 6);
+        Assert.Equal(6.5 + 0.25 * 5, line.Segments[1].BaselineMm, 6);
+        Assert.Equal(6.5 - 0.5 * 5, line.Segments[3].BaselineMm, 6);
+        Assert.Equal(5 * 0.65, line.Segments[3].FontSizeMm, 6);
+    }
+
+    [Fact]
+    public void Build_SplitsRunsByLineBreaks()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetCell(0, 0, new TableCell { Runs = { new TextRun("a\nb"), new TextRun("2") { Script = ScriptPosition.Superscript } } });
+
+        var lines = TableLayout.Build(model).Texts.Single().Lines;
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("a", lines[0].Segments.Single().Runs.Single().Text);
+        Assert.Equal(new[] { ScriptPosition.Normal, ScriptPosition.Superscript }, lines[1].Segments.Select(s => s.Script));
+        Assert.Equal(5 * 1.6, lines[1].BaselineMm - lines[0].BaselineMm, 6);
+    }
 }

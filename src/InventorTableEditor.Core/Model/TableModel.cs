@@ -10,7 +10,9 @@ public sealed class TableModel
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
-    public int Version { get; set; } = 1;
+    public const int CurrentVersion = 2;
+
+    public int Version { get; set; } = CurrentVersion;
 
     public TableStyle Style { get; set; } = new();
 
@@ -20,8 +22,8 @@ public sealed class TableModel
 
     public List<double> RowHeights { get; set; } = new();
 
-    /// <summary>Текст ячеек [строка][столбец]. Перенос строки внутри ячейки — '\n'.</summary>
-    public List<List<string>> Cells { get; set; } = new();
+    /// <summary>Ячейки [строка][столбец].</summary>
+    public List<List<TableCell>> Cells { get; set; } = new();
 
     public int RowCount => RowHeights.Count;
 
@@ -40,16 +42,25 @@ public sealed class TableModel
         return model;
     }
 
-    public string GetText(int row, int column) => Cells[row][column];
+    public TableCell GetCell(int row, int column) => Cells[row][column];
 
+    public string GetText(int row, int column) => Cells[row][column].PlainText;
+
+    /// <summary>Заменяет содержимое ячейки простым текстом с курсивом по умолчанию таблицы.</summary>
     public void SetText(int row, int column, string? text) =>
-        Cells[row][column] = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        Cells[row][column] = TableCell.FromText(text, Style.Italic);
+
+    public void SetCell(int row, int column, TableCell cell)
+    {
+        cell.Normalize();
+        Cells[row][column] = cell;
+    }
 
     public void InsertRow(int index)
     {
         if (index < 0 || index > RowCount) throw new ArgumentOutOfRangeException(nameof(index));
         RowHeights.Insert(index, Style.DefaultRowHeightMm);
-        Cells.Insert(index, Enumerable.Repeat(string.Empty, ColumnCount).ToList());
+        Cells.Insert(index, Enumerable.Range(0, ColumnCount).Select(_ => new TableCell()).ToList());
     }
 
     public void RemoveRow(int index)
@@ -66,7 +77,7 @@ public sealed class TableModel
         if (index < 0 || index > ColumnCount) throw new ArgumentOutOfRangeException(nameof(index));
         ColumnWidths.Insert(index, Style.DefaultColumnWidthMm);
         foreach (var row in Cells)
-            row.Insert(index, string.Empty);
+            row.Insert(index, new TableCell());
     }
 
     public void RemoveColumn(int index)
@@ -103,10 +114,55 @@ public sealed class TableModel
 
     public static TableModel FromJson(string json)
     {
-        var model = JsonSerializer.Deserialize<TableModel>(json, JsonOptions)
-                    ?? throw new InvalidDataException("Пустые данные таблицы.");
+        TableModel? model;
+        using (var document = JsonDocument.Parse(json))
+        {
+            model = IsLegacyFormat(document.RootElement)
+                ? FromLegacy(JsonSerializer.Deserialize<LegacyTableModel>(json, JsonOptions))
+                : JsonSerializer.Deserialize<TableModel>(json, JsonOptions);
+        }
+
+        if (model == null)
+            throw new InvalidDataException("Пустые данные таблицы.");
+
+        model.Version = CurrentVersion;
         model.Validate();
         return model;
+    }
+
+    /// <summary>Версия 1 хранила текст ячеек строками.</summary>
+    private static bool IsLegacyFormat(JsonElement root) =>
+        root.TryGetProperty(nameof(Cells), out var cells)
+        && cells.ValueKind == JsonValueKind.Array
+        && cells.EnumerateArray().Any(row => row.ValueKind == JsonValueKind.Array
+                                              && row.EnumerateArray().Any(cell => cell.ValueKind == JsonValueKind.String));
+
+    private static TableModel? FromLegacy(LegacyTableModel? legacy)
+    {
+        if (legacy == null)
+            return null;
+
+        return new TableModel
+        {
+            Style = legacy.Style,
+            HasHeader = legacy.HasHeader,
+            ColumnWidths = legacy.ColumnWidths,
+            RowHeights = legacy.RowHeights,
+            Cells = legacy.Cells.Select(row => row.Select(text => TableCell.FromText(text, legacy.Style.Italic)).ToList()).ToList(),
+        };
+    }
+
+    private sealed class LegacyTableModel
+    {
+        public TableStyle Style { get; set; } = new();
+
+        public bool HasHeader { get; set; }
+
+        public List<double> ColumnWidths { get; set; } = new();
+
+        public List<double> RowHeights { get; set; } = new();
+
+        public List<List<string>> Cells { get; set; } = new();
     }
 
     private void Validate()

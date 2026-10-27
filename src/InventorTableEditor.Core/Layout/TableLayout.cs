@@ -12,8 +12,17 @@ public enum TextAlignment
 /// <summary>Отрезок линии таблицы. Координаты в мм от левого верхнего угла, Y вниз.</summary>
 public sealed record LineSegment(double X1, double Y1, double X2, double Y2, double WeightMm);
 
+/// <summary>
+/// Подряд идущие фрагменты строки с одинаковым положением (обычный текст, верхний или нижний индекс).
+/// В чертеже выводится одной надписью. <see cref="BaselineMm"/> — базовая линия от верха таблицы.
+/// </summary>
+public sealed record TextSegment(IReadOnlyList<TextRun> Runs, ScriptPosition Script, double FontSizeMm, double BaselineMm);
+
+/// <summary>Строка текста ячейки. <see cref="BaselineMm"/> — базовая линия от верха таблицы.</summary>
+public sealed record TextLine(IReadOnlyList<TextSegment> Segments, double BaselineMm, double FontSizeMm);
+
 /// <summary>Ячейка с текстом. Координаты в мм от левого верхнего угла, Y вниз.</summary>
-public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height, string Text, TextAlignment Alignment);
+public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height, IReadOnlyList<TextLine> Lines, TextAlignment Alignment);
 
 /// <summary>
 /// Геометрия таблицы для вывода в чертёж: границы столбцов и строк, линии и тексты.
@@ -48,9 +57,72 @@ public sealed class TableLayout
     public static double EffectiveRowHeight(TableModel model, int row)
     {
         var style = model.Style;
-        var maxLines = model.Cells[row].Max(t => t.Split('\n').Length);
-        var required = 2 * style.PaddingMm + style.FontSizeMm + (maxLines - 1) * style.FontSizeMm * style.LineSpacing;
+        var required = model.Cells[row].Max(cell => BlockHeight(cell, style)) + 2 * style.PaddingMm;
         return Math.Max(model.RowHeights[row], required);
+    }
+
+    /// <summary>Размер шрифта фрагмента в чертеже, мм (индексы уменьшены).</summary>
+    public static double RenderedSize(TextRun run, TableStyle style)
+    {
+        var size = run.FontSizeMm ?? style.FontSizeMm;
+        return run.Script == ScriptPosition.Normal ? size : size * style.ScriptScale;
+    }
+
+    /// <summary>Высота блока текста: от верха первой строки до базовой линии последней.</summary>
+    private static double BlockHeight(TableCell cell, TableStyle style)
+    {
+        var sizes = cell.SplitLines().Select(line => LineSize(line, style)).ToList();
+        return sizes[0] + sizes.Skip(1).Sum(size => size * style.LineSpacing);
+    }
+
+    /// <summary>Размер строки — наибольший размер основного текста (индексы не учитываются).</summary>
+    private static double LineSize(List<TextRun> line, TableStyle style)
+    {
+        var normal = line.Where(r => r.Script == ScriptPosition.Normal).ToList();
+        var source = normal.Count > 0 ? normal : line;
+        return source.Count > 0 ? source.Max(r => r.FontSizeMm ?? style.FontSizeMm) : style.FontSizeMm;
+    }
+
+    private static List<TextLine> LayoutLines(TableCell cell, TableStyle style, double cellTop, double cellHeight)
+    {
+        var lines = cell.SplitLines();
+        var blockTop = cellTop + (cellHeight - BlockHeight(cell, style)) / 2;
+
+        var result = new List<TextLine>();
+        var baseline = blockTop;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var size = LineSize(lines[i], style);
+            baseline += i == 0 ? size : size * style.LineSpacing;
+            result.Add(new TextLine(Segments(lines[i], style, baseline, size), baseline, size));
+        }
+
+        return result;
+    }
+
+    private static List<TextSegment> Segments(List<TextRun> line, TableStyle style, double baseline, double lineSize)
+    {
+        var segments = new List<TextSegment>();
+        var start = 0;
+        while (start < line.Count)
+        {
+            var script = line[start].Script;
+            var end = start;
+            while (end < line.Count && line[end].Script == script)
+                end++;
+
+            var runs = line.GetRange(start, end - start);
+            var segmentBaseline = script switch
+            {
+                ScriptPosition.Superscript => baseline - style.SuperscriptRise * lineSize,
+                ScriptPosition.Subscript => baseline + style.SubscriptDrop * lineSize,
+                _ => baseline,
+            };
+            segments.Add(new TextSegment(runs, script, runs.Max(r => RenderedSize(r, style)), segmentBaseline));
+            start = end;
+        }
+
+        return segments;
     }
 
     public static TableLayout Build(TableModel model)
@@ -90,13 +162,15 @@ public sealed class TableLayout
         {
             for (var c = 0; c < model.ColumnCount; c++)
             {
-                var text = model.Cells[r][c];
-                if (string.IsNullOrWhiteSpace(text))
+                var cell = model.Cells[r][c];
+                if (cell.IsEmpty)
                     continue;
 
                 var alignment = model.IsHeaderRow(r) ? TextAlignment.Center : TextAlignment.Left;
-                texts.Add(new CellText(r, c, columnEdges[c], rowEdges[r],
-                    columnEdges[c + 1] - columnEdges[c], rowEdges[r + 1] - rowEdges[r], text, alignment));
+                var top = rowEdges[r];
+                var cellHeight = rowEdges[r + 1] - top;
+                texts.Add(new CellText(r, c, columnEdges[c], top, columnEdges[c + 1] - columnEdges[c], cellHeight,
+                    LayoutLines(cell, style, top, cellHeight), alignment));
             }
         }
 

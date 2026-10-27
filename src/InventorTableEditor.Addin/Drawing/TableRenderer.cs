@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Security;
 using System.Text;
 using Inventor;
@@ -66,37 +69,87 @@ internal static class TableRenderer
             TrySet(() => ((dynamic)line).LineWeight = weightCm);
         }
 
-        var style = model.Style;
         foreach (var cell in layout.Texts)
+            DrawCellText(sketch, cell, model.Style, geometry);
+    }
+
+    /// <summary>
+    /// Выводит текст ячейки. Каждая строка — цепочка надписей (обычный текст и индексы),
+    /// поставленных вплотную друг за другом. Ширину каждой надписи измеряет сам Inventor,
+    /// после чего строка целиком сдвигается по выравниванию ячейки.
+    /// </summary>
+    private static void DrawCellText(DrawingSketch sketch, CellText cell, TableStyle style, TransientGeometry geometry)
+    {
+        foreach (var line in cell.Lines)
         {
-            var x = cell.Alignment switch
+            var placed = new List<(Inventor.TextBox Box, double OffsetMm, TextSegment Segment)>();
+            var lineWidth = 0.0;
+            foreach (var segment in line.Segments)
             {
-                TextAlignment.Center => cell.Left + cell.Width / 2,
-                TextAlignment.Right => cell.Left + cell.Width - style.PaddingMm,
+                var box = AddText(sketch, Point(geometry, 0, segment.BaselineMm), FormatSegment(segment, style), PlainText(segment));
+                box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
+                box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextLower;
+                placed.Add((box, lineWidth, segment));
+                lineWidth += MeasureWidthMm(box, segment);
+            }
+
+            var left = cell.Alignment switch
+            {
+                TextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
+                TextAlignment.Right => cell.Left + cell.Width - style.PaddingMm - lineWidth,
                 _ => cell.Left + style.PaddingMm,
             };
-            var origin = Point(geometry, x, cell.Top + cell.Height / 2);
 
-            var textBox = AddText(sketch, origin, cell.Text, style);
-            textBox.HorizontalJustification = cell.Alignment switch
+            foreach (var (box, offset, segment) in placed)
             {
-                TextAlignment.Center => HorizontalTextAlignmentEnum.kAlignTextCenter,
-                TextAlignment.Right => HorizontalTextAlignmentEnum.kAlignTextRight,
-                _ => HorizontalTextAlignmentEnum.kAlignTextLeft,
-            };
-            textBox.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextMiddle;
-            // После смены выравнивания точка привязки задаётся заново.
-            textBox.Origin = origin;
+                // Низ надписи лежит чуть ниже базовой линии — на величину нижних выносных элементов.
+                var bottom = segment.BaselineMm + DescentRatio * segment.FontSizeMm;
+                box.Origin = Point(geometry, left + offset, bottom);
+            }
         }
+    }
+
+    /// <summary>Доля высоты шрифта, на которую низ надписи Inventor опущен ниже базовой линии.</summary>
+    private const double DescentRatio = 0.2;
+
+    /// <summary>
+    /// Ширина надписи в мм. Сначала спрашиваем Inventor, при неудаче — грубая оценка по числу символов.
+    /// </summary>
+    private static double MeasureWidthMm(Inventor.TextBox box, TextSegment segment)
+    {
+        try
+        {
+            double width = ((dynamic)box).Width;
+            if (width > 0)
+                return Units.CmToMm(width);
+        }
+        catch (Exception)
+        {
+            // Нет свойства Width — пробуем габарит.
+        }
+
+        try
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            var width = range.MaxPoint.X - range.MinPoint.X;
+            if (width > 0)
+                return Units.CmToMm(width);
+        }
+        catch (Exception)
+        {
+            // Нет и габарита — оценка ниже.
+        }
+
+        AddinLog.Write("Не удалось измерить ширину надписи, используется оценка.");
+        return PlainText(segment).Length * segment.FontSizeMm * 0.75;
     }
 
     /// <summary>
     /// Создаёт надпись. Если Inventor не принял форматированный текст, создаёт надпись простым текстом
     /// и применяет форматирование отдельно, чтобы текст в таблице появился в любом случае.
     /// </summary>
-    private static Inventor.TextBox AddText(DrawingSketch sketch, Point2d origin, string text, TableStyle style)
+    private static Inventor.TextBox AddText(DrawingSketch sketch, Point2d origin, string formatted, string plain)
     {
-        var formatted = FormatText(text, style);
         try
         {
             return sketch.TextBoxes.AddFitted(origin, formatted);
@@ -109,7 +162,7 @@ internal static class TableRenderer
         Inventor.TextBox textBox;
         try
         {
-            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')));
+            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(plain));
         }
         catch (Exception ex)
         {
@@ -117,7 +170,7 @@ internal static class TableRenderer
             AddinLog.Write($"AddFitted не принял и простой текст ({ex.Message}), пробую со стилем текста.");
             var document = (DrawingDocument)((dynamic)sketch.Parent).Parent;
             var textStyle = document.StylesManager.ActiveStandardStyle.ActiveObjectDefaults.GeneralNoteStyle;
-            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(text.Replace('\n', ' ')), textStyle);
+            textBox = sketch.TextBoxes.AddFitted(origin, SecurityElement.Escape(plain), textStyle);
         }
 
         try
@@ -132,21 +185,26 @@ internal static class TableRenderer
         return textBox;
     }
 
-    /// <summary>Форматированный текст Inventor: шрифт и стиль, строки через &lt;Br/&gt;.</summary>
-    private static string FormatText(string text, TableStyle style)
+    private static string PlainText(TextSegment segment) => string.Concat(segment.Runs.Select(r => r.Text));
+
+    /// <summary>Форматированный текст Inventor: каждый фрагмент в своём &lt;StyleOverride&gt;.</summary>
+    private static string FormatSegment(TextSegment segment, TableStyle style)
     {
         var body = new StringBuilder();
-        var lines = text.Split('\n');
-        for (var i = 0; i < lines.Length; i++)
+        foreach (var run in segment.Runs)
         {
-            if (i > 0)
-                body.Append("<Br/>");
-            body.Append(SecurityElement.Escape(lines[i]));
+            var size = Units.MmToCm(TableLayout.RenderedSize(run, style)).ToString(CultureInfo.InvariantCulture);
+            body.Append($"<StyleOverride Font='{SecurityElement.Escape(run.FontName ?? style.FontName)}' FontSize='{size}'");
+            if (run.Bold)
+                body.Append(" Bold='True'");
+            if (run.Italic)
+                body.Append(" Italic='True'");
+            if (run.Underline)
+                body.Append(" Underline='True'");
+            body.Append('>').Append(SecurityElement.Escape(run.Text)).Append("</StyleOverride>");
         }
 
-        var fontSizeCm = Units.MmToCm(style.FontSizeMm).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var italic = style.Italic ? " Italic='True'" : string.Empty;
-        return $"<StyleOverride Font='{SecurityElement.Escape(style.FontName)}' FontSize='{fontSizeCm}'{italic}>{body}</StyleOverride>";
+        return body.ToString();
     }
 
     /// <summary>Точка эскиза: мм с осью Y вниз → см Inventor с осью Y вверх.</summary>
