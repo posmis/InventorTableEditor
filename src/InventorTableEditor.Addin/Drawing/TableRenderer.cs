@@ -5,6 +5,7 @@ using Inventor;
 using InventorTableEditor.Core;
 using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
+using TableStyle = InventorTableEditor.Core.Model.TableStyle;
 
 namespace InventorTableEditor.Addin.Drawing;
 
