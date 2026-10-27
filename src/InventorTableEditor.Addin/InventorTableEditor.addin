@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Addin Type="Standard">
+  <ClassId>{01FC19AB-85AE-46CD-A9F7-842467069C51}</ClassId>
+  <ClientId>{01FC19AB-85AE-46CD-A9F7-842467069C51}</ClientId>
+  <DisplayName>Редактор таблиц</DisplayName>
+  <Description>Редактор таблиц для чертежей: индексы, объединение ячеек, шаблоны.</Description>
+  <!-- Путь относительно этого .addin-файла. -->
+  <Assembly>InventorTableEditor.Addin.dll</Assembly>
+  <LoadOnStartUp>1</LoadOnStartUp>
+  <UserUnloadable>1</UserUnloadable>
+  <Hidden>0</Hidden>
+  <!-- Inventor 2025 = версия 29. -->
+  <SupportedSoftwareVersionGreaterThan>28..</SupportedSoftwareVersionGreaterThan>
+  <DataVersion>1</DataVersion>
+  <UserInterfaceVersion>1</UserInterfaceVersion>
+</Addin>

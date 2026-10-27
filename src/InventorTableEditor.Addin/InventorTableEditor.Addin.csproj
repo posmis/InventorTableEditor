@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Аддин Inventor 2025: точка входа, лента, окно редактора (WPF), построение таблицы в чертеже. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms нужен только для конвертации иконок кнопок ленты в IPictureDisp. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>InventorTableEditor.Addin</RootNamespace>
+    <AssemblyName>InventorTableEditor.Addin</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Путь к Inventor можно переопределить: dotnet build -p:InventorDir="D:\Autodesk\Inventor 2025" -->
+  <PropertyGroup>
+    <InventorDir Condition="'$(InventorDir)' == ''">C:\Program Files\Autodesk\Inventor 2025</InventorDir>
+    <InventorInteropPath>$(InventorDir)\Bin\Public Assemblies\Autodesk.Inventor.Interop.dll</InventorInteropPath>
+    <!-- Папка автозагрузки аддинов текущего пользователя. -->
+    <AddinDeployDir>$(APPDATA)\Autodesk\ApplicationPlugins\InventorTableEditor</AddinDeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Autodesk.Inventor.Interop">
+      <HintPath>$(InventorInteropPath)</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InventorTableEditor.Core\InventorTableEditor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="InventorTableEditor.addin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="CheckInventorInterop" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(InventorInteropPath)')"
+           Text="Не найден Autodesk.Inventor.Interop.dll по пути '$(InventorInteropPath)'. Установите Inventor 2025 или укажите путь: -p:InventorDir=&quot;...&quot;" />
+  </Target>
+
+  <!-- В Debug аддин сразу копируется туда, откуда Inventor загрузит его при запуске. -->
+  <Target Name="DeployAddin" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' And '$(OS)' == 'Windows_NT'">
+    <ItemGroup>
+      <AddinFiles Include="$(OutDir)**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AddinFiles)" DestinationFiles="@(AddinFiles->'$(AddinDeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Message Importance="high" Text="Аддин скопирован в $(AddinDeployDir)" />
+  </Target>
+
+</Project>

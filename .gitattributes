@@ -1,0 +1,11 @@
+* text=auto
+*.cs      text eol=crlf
+*.xaml    text eol=crlf
+*.csproj  text eol=crlf
+*.sln     text eol=crlf
+*.addin   text eol=crlf
+*.props   text eol=crlf
+*.md      text
+*.ttf     binary
+*.png     binary
+*.ico     binary

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Модель таблицы, раскладка, настройки, шаблоны, буфер обмена.
+       Без зависимостей от Inventor и WPF, чтобы логику можно было тестировать где угодно. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>InventorTableEditor.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="InventorTableEditor.Core.Tests" />
+  </ItemGroup>
+
+</Project>

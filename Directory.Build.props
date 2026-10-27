@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Company>posmis</Company>
+    <Product>InventorTableEditor</Product>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>
