@@ -49,17 +49,51 @@ public class StandardAddInServer : ApplicationAddInServer
         _userInputEvents.OnDoubleClick += _commands.OnDoubleClick;
     }
 
+    /// <summary>
+    /// Добавляет панель «Таблицы» в конец (справа) каждой вкладки пояснений чертежа:
+    /// стандартной «Пояснения» и вкладок, добавленных другими надстройками (например «Пояснения ЕСКД»).
+    /// </summary>
     private void AddRibbonPanel()
     {
-        var tab = _inventor!.UserInterfaceManager.Ribbons["Drawing"].RibbonTabs["id_TabAnnotate"];
+        var added = false;
+        foreach (RibbonTab tab in _inventor!.UserInterfaceManager.Ribbons["Drawing"].RibbonTabs)
+        {
+            if (!IsAnnotationTab(tab))
+                continue;
+
+            try
+            {
+                AddPanel(tab);
+                added = true;
+            }
+            catch (COMException)
+            {
+                // Вкладка не принимает панели — пропускаем, остальные вкладки важнее.
+            }
+        }
+
+        if (!added)
+            AddPanel(_inventor.UserInterfaceManager.Ribbons["Drawing"].RibbonTabs["id_TabAnnotate"]);
+    }
+
+    private static bool IsAnnotationTab(RibbonTab tab) =>
+        tab.InternalName == "id_TabAnnotate"
+        || tab.DisplayName.Contains("Пояснен", StringComparison.OrdinalIgnoreCase)
+        || tab.DisplayName.Contains("Annotat", StringComparison.OrdinalIgnoreCase);
+
+    private void AddPanel(RibbonTab tab)
+    {
+        // Внутреннее имя панели должно быть уникальным в пределах ленты.
+        var panelId = PanelId + "." + tab.InternalName;
         RibbonPanel panel;
         try
         {
-            panel = tab.RibbonPanels[PanelId];
+            panel = tab.RibbonPanels[panelId];
         }
         catch (COMException)
         {
-            panel = tab.RibbonPanels.Add("Таблицы", PanelId, ClientId, string.Empty, false);
+            // Без целевой панели новая панель добавляется в конец вкладки, то есть справа.
+            panel = tab.RibbonPanels.Add("Таблицы", panelId, ClientId, string.Empty, false);
         }
 
         panel.CommandControls.AddButton(_newTableButton, true);
