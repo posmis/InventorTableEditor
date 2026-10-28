@@ -51,6 +51,13 @@ internal sealed class TableEditorWindow : Window
     private ToggleButton? _superscriptButton;
     private ToggleButton? _subscriptButton;
 
+    /// <summary>Последняя раскладка таблицы — по ней в поле высоты показывается фактическая высота строки.</summary>
+    private TableLayout? _layout;
+
+    /// <summary>Значения, показанные в полях размеров: размер применяется, только если пользователь изменил число.</summary>
+    private string _shownWidth = string.Empty;
+    private string _shownHeight = string.Empty;
+
     /// <summary>Идёт протягивание мышью для выделения ячеек.</summary>
     private bool _draggingRange;
 
@@ -463,7 +470,7 @@ internal sealed class TableEditorWindow : Window
         panel.Children.Add(_headerBox);
 
         _columnWidthBox.ToolTip = "Ширина текущего столбца, мм";
-        _rowHeightBox.ToolTip = "Высота текущей строки, мм (растёт под текст)";
+        _rowHeightBox.ToolTip = "Высота текущей строки, мм.\nЕсли текст не помещается, строка выше заданной —\nздесь показана фактическая высота.";
         // При уходе из поля размера фокус не перехватывается: пользователь мог перейти в соседнее поле.
         _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
         _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
@@ -691,10 +698,12 @@ internal sealed class TableEditorWindow : Window
 
     private void ApplySizeBoxes(bool focusEditor = true)
     {
+        // Применяется только то, что пользователь изменил: в поле высоты показана фактическая высота,
+        // и если её записать как заданную, строка не уменьшится после удаления текста.
         var changed = false;
-        if (MmParser.TryParseCellSize(_columnWidthBox.Text, out var width))
+        if (_columnWidthBox.Text != _shownWidth && MmParser.TryParseCellSize(_columnWidthBox.Text, out var width))
             changed |= _session.SetColumnWidth(width);
-        if (MmParser.TryParseCellSize(_rowHeightBox.Text, out var height))
+        if (_rowHeightBox.Text != _shownHeight && MmParser.TryParseCellSize(_rowHeightBox.Text, out var height))
             changed |= _session.SetRowHeight(height);
 
         if (changed)
@@ -703,10 +712,23 @@ internal sealed class TableEditorWindow : Window
             UpdateSizeBoxes();
     }
 
+    /// <summary>
+    /// Ширина текущего столбца и фактическая высота текущей строки (с учётом текста, который не поместился
+    /// в заданную высоту). Поле, в котором пользователь сейчас печатает, не перезаписывается.
+    /// </summary>
     private void UpdateSizeBoxes()
     {
-        _columnWidthBox.Text = MmParser.Format(Model.ColumnWidths[_session.Column]);
-        _rowHeightBox.Text = MmParser.Format(Model.RowHeights[_session.Row]);
+        var row = _session.Row;
+        var height = _layout != null && row + 1 < _layout.RowEdges.Count
+            ? _layout.RowEdges[row + 1] - _layout.RowEdges[row]
+            : Model.RowHeights[row];
+
+        _shownWidth = MmParser.Format(Model.ColumnWidths[_session.Column]);
+        _shownHeight = MmParser.Format(height);
+        if (!_columnWidthBox.IsKeyboardFocusWithin)
+            _columnWidthBox.Text = _shownWidth;
+        if (!_rowHeightBox.IsKeyboardFocusWithin)
+            _rowHeightBox.Text = _shownHeight;
     }
 
     // ---------- Сетка таблицы ----------
@@ -797,6 +819,7 @@ internal sealed class TableEditorWindow : Window
     private void RefreshLayout()
     {
         var layout = TableLayout.Build(Model, _metrics, includeEmptyCells: true);
+        _layout = layout;
         for (var r = 0; r < Model.RowCount && r < _grid.RowDefinitions.Count; r++)
             _grid.RowDefinitions[r].Height = new GridLength((layout.RowEdges[r + 1] - layout.RowEdges[r]) * PxPerMm);
 
@@ -805,5 +828,8 @@ internal sealed class TableEditorWindow : Window
             if (_editors.TryGetValue((text.Row, text.Column), out var editor))
                 editor.Layout = text;
         }
+
+        // Высота строки могла вырасти под текст — поле высоты показывает фактическую.
+        UpdateSizeBoxes();
     }
 }
