@@ -79,7 +79,7 @@ internal static class TableRenderer
     }
 
     private static TextStyle StyleFor(TextStyleCache styles, TextRun run, TableStyle style, double widthScale) =>
-        styles.Get(run.FontName ?? style.FontName, TableLayout.RenderedSize(run, style), run.Bold, run.Italic, run.Underline, widthScale);
+        styles.Get(run.FontName ?? style.FontName, TableLayout.RenderedSize(run, style), run.Bold, run.Italic, underline: false, widthScale);
 
     private static void DrawLayout(DrawingSketch sketch, TableModel model, TableLayout layout, TextStyleCache styles, TransientGeometry geometry)
     {
@@ -118,6 +118,15 @@ internal static class TableRenderer
                 box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
                 // После смены выравнивания точка привязки задаётся заново.
                 box.Origin = origin;
+            }
+
+            foreach (var underline in TextPlanner.Underlines(plan, style))
+            {
+                var stroke = sketch.SketchLines.AddByTwoPoints(
+                    Point(geometry, underline.X1Mm, underline.YMm),
+                    Point(geometry, underline.X2Mm, underline.YMm));
+                var weightCm = Units.MmToCm(style.UnderlineMm);
+                TrySet(() => ((dynamic)stroke).LineWeight = weightCm);
             }
         }
     }

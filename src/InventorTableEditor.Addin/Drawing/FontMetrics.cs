@@ -30,6 +30,13 @@ internal sealed class FontMetrics
             _capHeightEm = 0.7;
     }
 
+    /// <summary>Расстояние от базовой линии вниз до подчёркивания при высоте текста <paramref name="heightMm"/>, мм.</summary>
+    public double UnderlineOffsetMm(double heightMm)
+    {
+        var position = Math.Abs(_glyphs.UnderlinePosition);
+        return (position > 0 ? position : 0.1) / _capHeightEm * heightMm;
+    }
+
     /// <summary>Кегль (em) в долях высоты заглавной буквы: высота текста Inventor × это число = размер шрифта WPF.</summary>
     public double EmPerCapHeight => 1.0 / _capHeightEm;
 

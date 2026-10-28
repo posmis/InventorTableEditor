@@ -17,6 +17,9 @@ public sealed class TableStyle
 
     public double PaddingMm { get; set; } = 1.0;
 
+    /// <summary>Толщина линии подчёркивания, мм (подчёркивание шрифта Inventor слишком толстое).</summary>
+    public double UnderlineMm { get; set; } = 0.2;
+
     /// <summary>Шаг строк текста внутри ячейки в долях высоты шрифта.</summary>
     public double LineSpacing { get; set; } = 1.6;
 

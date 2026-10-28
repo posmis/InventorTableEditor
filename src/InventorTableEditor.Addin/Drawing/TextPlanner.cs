@@ -8,8 +8,11 @@ namespace InventorTableEditor.Addin.Drawing;
 /// <summary>Фрагмент строки (мм, до сжатия по ширине): положение пера, левый край надписи от начала строки, верх букв от верха таблицы.</summary>
 internal sealed record PlannedRun(TextRun Run, double SizeMm, double PenMm, double BoxLeftMm, double BaselineMm, double TopMm);
 
-/// <summary>Положение пера в начале фрагмента строки (включая фрагменты из одних пробелов), мм до сжатия.</summary>
-internal sealed record PenPosition(TextRun Run, double SizeMm, double PenMm);
+/// <summary>Фрагмент строки (включая фрагменты из одних пробелов): перо в начале, ширина и базовая линия, мм до сжатия.</summary>
+internal sealed record PenPosition(TextRun Run, double SizeMm, double PenMm, double AdvanceMm, double BaselineMm);
+
+/// <summary>Отрезок подчёркивания в координатах таблицы, мм: от X1 до X2 на высоте Y.</summary>
+internal sealed record Underline(double X1Mm, double X2Mm, double YMm);
 
 /// <summary>
 /// Расстановка строки: видимые фрагменты, перья всех фрагментов (для курсора), коэффициент сжатия
@@ -81,7 +84,7 @@ internal static class TextPlanner
 
                 previous = run;
                 previousOverhang = extents.OverhangMm;
-                pens.Add(new PenPosition(run, size, pen));
+                pens.Add(new PenPosition(run, size, pen, extents.AdvanceMm, segment.BaselineMm));
                 if (!string.IsNullOrWhiteSpace(run.Text))
                 {
                     runs.Add(new PlannedRun(run, size, pen, pen + extents.BoxLeftMm, segment.BaselineMm, segment.BaselineMm - extents.TopMm));
@@ -122,6 +125,46 @@ internal static class TextPlanner
         };
 
         return new LinePlan(runs, pens, scale, lineLeft - left * scale);
+    }
+
+    /// <summary>
+    /// Подчёркивание строки — своими линиями, а не шрифтом Inventor (у него слишком толстое).
+    /// Соседние подчёркнутые фрагменты на одной базовой линии, включая пробелы между ними, — одна линия.
+    /// </summary>
+    public static List<Underline> Underlines(LinePlan plan, TableStyle style)
+    {
+        var result = new List<Underline>();
+        Underline? current = null;
+        foreach (var pen in plan.Pens)
+        {
+            if (!pen.Run.Underline)
+            {
+                Flush();
+                continue;
+            }
+
+            var metrics = FontMetrics.Get(pen.Run.FontName ?? style.FontName, pen.Run.Bold, pen.Run.Italic);
+            var y = pen.BaselineMm + (metrics?.UnderlineOffsetMm(pen.SizeMm) ?? pen.SizeMm * 0.14);
+            var x1 = plan.OriginMm + pen.PenMm * plan.WidthScale;
+            var x2 = plan.OriginMm + (pen.PenMm + pen.AdvanceMm) * plan.WidthScale;
+            if (current != null && Math.Abs(current.YMm - y) < 1e-6 && x1 <= current.X2Mm + 1e-6)
+                current = current with { X2Mm = Math.Max(current.X2Mm, x2) };
+            else
+            {
+                Flush();
+                current = new Underline(x1, x2, y);
+            }
+        }
+
+        Flush();
+        return result;
+
+        void Flush()
+        {
+            if (current != null)
+                result.Add(current);
+            current = null;
+        }
     }
 
     /// <summary>Ширина текста в формате фрагмента по ширинам букв, мм (без сжатия).</summary>

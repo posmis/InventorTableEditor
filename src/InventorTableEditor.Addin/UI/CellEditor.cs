@@ -331,8 +331,6 @@ internal sealed class CellEditor : FrameworkElement
                     run.Bold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
                 var text = new FormattedText(run.Text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface,
                     item.SizeMm * emPerCap * _pxPerMm, Brushes.Black, pixelsPerDip);
-                if (run.Underline)
-                    text.SetTextDecorations(TextDecorations.Underline);
 
                 // Начало фрагмента на базовой линии; сжатие по ширине и наклон — относительно него.
                 var x = X(plan.OriginMm + item.PenMm * plan.WidthScale);
@@ -344,6 +342,11 @@ internal sealed class CellEditor : FrameworkElement
                 context.DrawText(text, new Point(0, -text.Baseline));
                 context.Pop();
             }
+
+            // Подчёркивание — линиями заданной толщины, как в чертеже.
+            var underlinePen = new Pen(Brushes.Black, Math.Max(1, _style.UnderlineMm * _pxPerMm));
+            foreach (var underline in TextPlanner.Underlines(plan, _style))
+                context.DrawLine(underlinePen, new Point(X(underline.X1Mm), Y(underline.YMm)), new Point(X(underline.X2Mm), Y(underline.YMm)));
         }
     }
 
