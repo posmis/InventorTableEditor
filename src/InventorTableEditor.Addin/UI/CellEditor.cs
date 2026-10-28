@@ -24,6 +24,9 @@ internal sealed class CellEditor : FrameworkElement
     private readonly double _pxPerMm;
     private readonly Brush _background;
     private readonly DispatcherTimer _blink = new() { Interval = TimeSpan.FromMilliseconds(530) };
+    /// <summary>Толщина обводки жирного текста в долях кегля.</summary>
+    private const double BoldStroke = 0.035;
+
     private readonly ITextMetrics _metrics;
     private CellText? _layout;
     private CaretMap? _caretMap;
@@ -332,10 +335,12 @@ internal sealed class CellEditor : FrameworkElement
                 var run = item.Run;
                 var fontName = run.FontName ?? _style.FontName;
                 var emPerCap = FontMetrics.Get(fontName)?.EmPerCapHeight ?? EditorFonts.EmPerTextHeight;
-                var typeface = new Typeface(EditorFonts.FontFor(fontName), FontStyles.Normal,
-                    run.Bold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
+                // Всегда обычное начертание: жирное WPF у шрифтов без своего жирного расширяет буквы,
+                // и курсор (он ставится по ширинам обычных букв, как в чертеже) оказывался внутри букв.
+                var typeface = new Typeface(EditorFonts.FontFor(fontName), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+                var emSize = item.SizeMm * emPerCap * _pxPerMm;
                 var text = new FormattedText(run.Text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface,
-                    item.SizeMm * emPerCap * _pxPerMm, Brushes.Black, pixelsPerDip);
+                    emSize, Brushes.Black, pixelsPerDip);
 
                 // Начало фрагмента на базовой линии; сжатие по ширине и наклон — относительно него.
                 var x = X(plan.ToTableX(item.PenMm));
@@ -344,7 +349,17 @@ internal sealed class CellEditor : FrameworkElement
                 var scale = plan.WidthScale;
 
                 context.PushTransform(new MatrixTransform(scale, 0, -slant * scale, 1, x, baseline));
-                context.DrawText(text, new Point(0, -text.Baseline));
+                if (run.Bold)
+                {
+                    // Жирный — утолщённый контур тех же букв: ширина букв не меняется.
+                    var outline = text.BuildGeometry(new Point(0, -text.Baseline));
+                    context.DrawGeometry(Brushes.Black, new Pen(Brushes.Black, emSize * BoldStroke), outline);
+                }
+                else
+                {
+                    context.DrawText(text, new Point(0, -text.Baseline));
+                }
+
                 context.Pop();
             }
 
