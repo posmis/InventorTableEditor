@@ -52,36 +52,60 @@ internal sealed class FontMetrics
     }
 
     /// <summary>
-    /// Размеры текста при высоте шрифта <paramref name="heightMm"/>, мм:
-    /// подъём верха букв над базовой линией, поле до первой буквы (с ведущими пробелами),
-    /// поле после последней буквы (с хвостовыми пробелами) и полная ширина с полями.
+    /// Наклон курсива Inventor: буквы сдвигаются вокруг базовой линии примерно на 15°
+    /// (подобрано по ширинам надписей из журнала Inventor 2025).
     /// </summary>
-    public TextExtents Measure(string text, double heightMm)
+    public static readonly double ItalicSlant = Math.Tan(15 * Math.PI / 180);
+
+    /// <summary>
+    /// Размеры текста при высоте шрифта <paramref name="heightMm"/>, мм, от начала текста (положения пера):
+    /// подъём верха букв над базовой линией; левый край надписи Inventor (у наклонного текста нижние
+    /// выносные элементы уходят левее начала); ширина текста по ширинам букв; на сколько наклонные
+    /// буквы выступают правее этой ширины.
+    /// </summary>
+    public TextExtents Measure(string text, double heightMm, bool italic)
     {
         var scale = heightMm / _capHeightEm;
-        double pen = 0, inkLeft = double.NaN, inkRight = 0, top = 0;
+        var slant = italic ? ItalicSlant : 0.0;
+        double pen = 0, left = 0, right = 0, top = 0;
         foreach (var ch in text)
         {
             if (!_glyphs.CharacterToGlyphMap.TryGetValue(ch, out var glyph))
                 continue;
 
-            var advance = _glyphs.AdvanceWidths[glyph];
-            var bounds = GlyphBounds(glyph);
-            if (bounds is { } box && !box.IsEmpty && box.Width > 0)
+            if (SlantedBounds(glyph, slant) is { } box)
             {
-                if (double.IsNaN(inkLeft))
-                    inkLeft = pen + box.Left;
-                inkRight = pen + box.Right;
-                top = Math.Max(top, AboveBaseline(box));
+                left = Math.Min(left, pen + box.Left);
+                right = Math.Max(right, pen + box.Right);
+                top = Math.Max(top, box.Top);
             }
 
-            pen += advance;
+            pen += _glyphs.AdvanceWidths[glyph];
         }
 
-        if (double.IsNaN(inkLeft))
-            return new TextExtents(0, pen * scale, 0, pen * scale);
+        return new TextExtents(top * scale, left * scale, pen * scale, Math.Max(0, right - pen) * scale);
+    }
 
-        return new TextExtents(top * scale, inkLeft * scale, (pen - inkRight) * scale, pen * scale);
+    /// <summary>Габарит буквы с наклоном, в долях кегля: X вправо от пера, Top — подъём над базовой линией.</summary>
+    private (double Left, double Right, double Top)? SlantedBounds(ushort glyph, double slant)
+    {
+        try
+        {
+            var outline = _glyphs.GetGlyphOutline(glyph, 1.0, 1.0).Clone();
+            var plain = outline.Bounds;
+            if (plain.IsEmpty || plain.Width <= 0)
+                return null;
+
+            // Сдвиг вправо пропорционален высоте над базовой линией.
+            var shear = _yDown ? -slant : slant;
+            outline.Transform = new MatrixTransform(new Matrix(1, 0, shear, 1, 0, 0));
+            var slanted = outline.Bounds;
+            return (slanted.Left, slanted.Right, AboveBaseline(plain));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private double AboveBaseline(Rect box) => _yDown ? -box.Top : box.Bottom;
@@ -103,5 +127,8 @@ internal sealed class FontMetrics
     }
 }
 
-/// <summary>Размеры текста в мм: верх букв над базовой линией, поля слева и справа, ширина с полями.</summary>
-internal readonly record struct TextExtents(double TopMm, double LeftBearingMm, double RightBearingMm, double AdvanceMm);
+/// <summary>
+/// Размеры текста в мм от положения пера: верх букв над базовой линией, левый край надписи Inventor
+/// (≤ 0), ширина по ширинам букв, выступ наклонных букв правее этой ширины (≥ 0).
+/// </summary>
+internal readonly record struct TextExtents(double TopMm, double BoxLeftMm, double AdvanceMm, double OverhangMm);

@@ -30,7 +30,7 @@
 - Шаблоны таблиц, например таблица параметров звёздочки.
 - Общие настройки: значения по умолчанию, сброс к заводским, сохранение.
 
-Подробное описание: [docs/requirements.md](docs/requirements.md). План работ: [docs/roadmap.md](docs/roadmap.md). Технические решения: [docs/architecture.md](docs/architecture.md).
+Подробное описание: [docs/requirements.md](docs/requirements.md). План работ: [docs/roadmap.md](docs/roadmap.md). Технические решения: [docs/architecture.md](docs/architecture.md). Расстановка текста: [docs/typography.md](docs/typography.md).
 
 ## Требования
 

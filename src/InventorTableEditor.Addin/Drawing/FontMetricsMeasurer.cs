@@ -16,6 +16,6 @@ internal sealed class FontMetricsMeasurer : ITextMeasurer
     public double AdvanceWidthMm(TextRun run, string text, double sizeMm)
     {
         var metrics = FontMetrics.Get(run.FontName ?? _style.FontName, run.Bold, run.Italic);
-        return metrics?.Measure(text, sizeMm).AdvanceMm ?? text.Length * sizeMm * 0.6;
+        return metrics?.Measure(text, sizeMm, run.Italic).AdvanceMm ?? text.Length * sizeMm * 0.6;
     }
 }

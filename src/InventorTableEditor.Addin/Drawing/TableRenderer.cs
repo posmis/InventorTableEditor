@@ -105,25 +105,33 @@ internal static class TableRenderer
 
     /// <summary>
     /// Выводит текст ячейки. Каждая строка — цепочка надписей (по одной на фрагмент с единым
-    /// форматированием). Надпись Inventor — это прямоугольник по очертаниям букв, его Origin —
-    /// левый верхний угол. Поэтому по метрикам шрифта считаем, насколько верх букв выше базовой
-    /// линии и какие пустые поля у букв по краям, а ширину самих букв берём у Inventor.
+    /// форматированием). Фрагменты ставятся по ширинам букв из метрик шрифта, как в Word, а на стыке
+    /// наклонного текста с прямым или с верхним индексом добавляется поправка на наклон (правила —
+    /// docs/typography.md). Надпись Inventor — прямоугольник от левого края букв до конца текста,
+    /// по высоте — по очертаниям букв; её Origin — левый верхний угол.
     /// После расстановки строка целиком сдвигается по выравниванию ячейки.
     /// </summary>
     private static void DrawCellText(DrawingSketch sketch, CellText cell, TableStyle style, TextStyleCache styles, TransientGeometry geometry)
     {
         foreach (var line in cell.Lines)
         {
-            // Надпись, левый край букв от начала строки и верх букв от верха таблицы, мм.
-            var placed = new List<(Inventor.TextBox Box, double InkLeftMm, double TopMm)>();
-            double pen = 0, inkStart = double.NaN, inkEnd = 0;
+            // Надпись, её левый край от начала строки и верх от верха таблицы, мм.
+            var placed = new List<(Inventor.TextBox Box, double LeftMm, double TopMm)>();
+            double pen = 0, lineLeft = double.PositiveInfinity, lineRight = double.NegativeInfinity;
+            TextRun? previous = null;
+            var previousOverhang = 0.0;
 
             foreach (var segment in line.Segments)
             {
                 foreach (var run in segment.Runs)
                 {
                     var size = TableLayout.RenderedSize(run, style);
-                    var extents = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic)?.Measure(run.Text, size);
+                    var extents = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic)?.Measure(run.Text, size, run.Italic);
+                    if (previous != null && NeedsItalicCorrection(previous, run))
+                        pen += previousOverhang;
+
+                    previous = run;
+                    previousOverhang = extents?.OverhangMm ?? 0;
                     if (string.IsNullOrWhiteSpace(run.Text))
                     {
                         pen += extents?.AdvanceMm ?? run.Text.Length * size * 0.4;
@@ -135,24 +143,34 @@ internal static class TableRenderer
                     box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
                     box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
 
-                    var inkWidth = MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
-                    var inkLeft = pen + (extents?.LeftBearingMm ?? 0);
-                    var top = extents is { } known
-                        ? segment.BaselineMm - known.TopMm
-                        : segment.BaselineMm - MeasureHeightMm(box, size);
-                    placed.Add((box, inkLeft, top));
+                    double boxLeft, advance, right, top;
+                    if (extents is { } known)
+                    {
+                        boxLeft = pen + known.BoxLeftMm;
+                        advance = known.AdvanceMm;
+                        right = pen + known.AdvanceMm + known.OverhangMm;
+                        top = segment.BaselineMm - known.TopMm;
+                    }
+                    else
+                    {
+                        // Шрифт не найден в Windows: ширина и высота — как сообщает Inventor.
+                        advance = MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
+                        boxLeft = pen;
+                        right = pen + advance;
+                        top = segment.BaselineMm - MeasureHeightMm(box, size);
+                    }
 
-                    if (double.IsNaN(inkStart))
-                        inkStart = inkLeft;
-                    inkEnd = inkLeft + inkWidth;
-                    pen = inkEnd + (extents?.RightBearingMm ?? size * 0.1);
+                    placed.Add((box, boxLeft, top));
+                    lineLeft = Math.Min(lineLeft, boxLeft);
+                    lineRight = Math.Max(lineRight, right);
+                    pen += advance;
                 }
             }
 
             if (placed.Count == 0)
                 continue;
 
-            var lineWidth = inkEnd - inkStart;
+            var lineWidth = lineRight - lineLeft;
             var left = cell.Alignment switch
             {
                 HorizontalTextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
@@ -160,10 +178,20 @@ internal static class TableRenderer
                 _ => cell.Left + style.PaddingMm,
             };
 
-            foreach (var (box, inkLeft, top) in placed)
-                box.Origin = Point(geometry, left + inkLeft - inkStart, top);
+            foreach (var (box, boxLeft, top) in placed)
+                box.Origin = Point(geometry, left + boxLeft - lineLeft, top);
         }
     }
+
+    /// <summary>
+    /// Поправка на наклон (как italic correction в TeX): после наклонного фрагмента верх букв выступает
+    /// вправо и налезает на следующий. Нужна перед прямым текстом и перед верхним индексом;
+    /// перед нижним индексом не нужна — он стоит ниже выступа.
+    /// </summary>
+    private static bool NeedsItalicCorrection(TextRun previous, TextRun next) =>
+        previous.Italic
+        && next.Script != ScriptPosition.Subscript
+        && (!next.Italic || next.Script != previous.Script);
 
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
     private static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
