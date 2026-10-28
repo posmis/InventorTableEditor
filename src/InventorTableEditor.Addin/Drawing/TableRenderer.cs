@@ -105,30 +105,54 @@ internal static class TableRenderer
 
     /// <summary>
     /// Выводит текст ячейки. Каждая строка — цепочка надписей (по одной на фрагмент с единым
-    /// форматированием), поставленных вплотную друг за другом. Ширину каждой надписи измеряет
-    /// сам Inventor, после чего строка целиком сдвигается по выравниванию ячейки.
+    /// форматированием). Надпись Inventor — это прямоугольник по очертаниям букв, его Origin —
+    /// левый верхний угол. Поэтому по метрикам шрифта считаем, насколько верх букв выше базовой
+    /// линии и какие пустые поля у букв по краям, а ширину самих букв берём у Inventor.
+    /// После расстановки строка целиком сдвигается по выравниванию ячейки.
     /// </summary>
     private static void DrawCellText(DrawingSketch sketch, CellText cell, TableStyle style, TextStyleCache styles, TransientGeometry geometry)
     {
         foreach (var line in cell.Lines)
         {
-            var placed = new List<(Inventor.TextBox Box, double OffsetMm, double BaselineMm, double SizeMm)>();
-            var lineWidth = 0.0;
+            // Надпись, левый край букв от начала строки и верх букв от верха таблицы, мм.
+            var placed = new List<(Inventor.TextBox Box, double InkLeftMm, double TopMm)>();
+            double pen = 0, inkStart = double.NaN, inkEnd = 0;
+
             foreach (var segment in line.Segments)
             {
                 foreach (var run in segment.Runs)
                 {
                     var size = TableLayout.RenderedSize(run, style);
+                    var extents = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic)?.Measure(run.Text, size);
+                    if (string.IsNullOrWhiteSpace(run.Text))
+                    {
+                        pen += extents?.AdvanceMm ?? run.Text.Length * size * 0.4;
+                        continue;
+                    }
+
                     var textStyle = StyleFor(styles, run, style);
                     var box = sketch.TextBoxes.AddFitted(Point(geometry, 0, segment.BaselineMm), EscapeText(run.Text), textStyle);
                     box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
                     box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
-                    placed.Add((box, lineWidth, segment.BaselineMm, size));
-                    LogSize(box, run.Text, size);
-                    lineWidth += MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
+
+                    var inkWidth = MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
+                    var inkLeft = pen + (extents?.LeftBearingMm ?? 0);
+                    var top = extents is { } known
+                        ? segment.BaselineMm - known.TopMm
+                        : segment.BaselineMm - MeasureHeightMm(box, size);
+                    placed.Add((box, inkLeft, top));
+
+                    if (double.IsNaN(inkStart))
+                        inkStart = inkLeft;
+                    inkEnd = inkLeft + inkWidth;
+                    pen = inkEnd + (extents?.RightBearingMm ?? size * 0.1);
                 }
             }
 
+            if (placed.Count == 0)
+                continue;
+
+            var lineWidth = inkEnd - inkStart;
             var left = cell.Alignment switch
             {
                 HorizontalTextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
@@ -136,54 +160,13 @@ internal static class TableRenderer
                 _ => cell.Left + style.PaddingMm,
             };
 
-            foreach (var (box, offset, baseline, size) in placed)
-            {
-                // Origin надписи Inventor — её левый верхний угол. Низ надписи должен лежать
-                // чуть ниже базовой линии (на нижние выносные элементы), поэтому верх = низ − высота надписи.
-                var bottom = baseline + DescentRatio * size;
-                box.Origin = Point(geometry, left + offset, bottom - MeasureHeightMm(box, size));
-            }
+            foreach (var (box, inkLeft, top) in placed)
+                box.Origin = Point(geometry, left + inkLeft - inkStart, top);
         }
     }
 
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
     private static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-
-    /// <summary>
-    /// Доля высоты шрифта, на которую низ надписи Inventor опущен ниже базовой линии.
-    /// По проверке в Inventor 2025 низ надписи совпадает с базовой линией.
-    /// </summary>
-    private const double DescentRatio = 0.0;
-
-    /// <summary>Диагностика: какие размеры надписи сообщает Inventor (Width, Height, RangeBox), в мм.</summary>
-    private static void LogSize(Inventor.TextBox box, string text, double sizeMm)
-    {
-        string Read(Func<double> read)
-        {
-            try
-            {
-                return Units.CmToMm(read()).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-            }
-            catch (Exception)
-            {
-                return "нет";
-            }
-        }
-
-        var width = Read(() => ((dynamic)box).Width);
-        var height = Read(() => ((dynamic)box).Height);
-        var rangeWidth = Read(() =>
-        {
-            Box2d range = ((dynamic)box).RangeBox;
-            return range.MaxPoint.X - range.MinPoint.X;
-        });
-        var rangeHeight = Read(() =>
-        {
-            Box2d range = ((dynamic)box).RangeBox;
-            return range.MaxPoint.Y - range.MinPoint.Y;
-        });
-        AddinLog.Write($"Надпись «{text}» {sizeMm:0.##} мм: Width={width} Height={height} RangeBox={rangeWidth}x{rangeHeight}");
-    }
 
     /// <summary>Высота надписи в мм; при неудаче — оценка по размеру шрифта.</summary>
     private static double MeasureHeightMm(Inventor.TextBox box, double sizeMm)
@@ -212,7 +195,7 @@ internal static class TableRenderer
         }
 
         AddinLog.Write("Не удалось измерить высоту надписи, используется оценка.");
-        return sizeMm * (1 + DescentRatio);
+        return sizeMm;
     }
 
     /// <summary>

@@ -42,7 +42,6 @@ internal sealed class TextStyleCache
         // Стиль примечаний ЕСКД может растягивать текст по ширине. Inventor при этом сообщает
         // ширину надписи без растяжения, и фрагменты строки налезают друг на друга.
         TrySet(name, "WidthScale", () => ((dynamic)style).WidthScale = 1.0);
-        TrySet(name, "CharacterSpacing", () => ((dynamic)style).CharacterSpacing = 0.0);
         _widthScales[name] = ReadWidthScale(style);
 
         _styles[name] = style;
@@ -99,7 +98,7 @@ internal sealed class TextStyleCache
         {
             try
             {
-                return property == "WidthScale" ? ((object)((dynamic)source).WidthScale).ToString()! : ((object)((dynamic)source).CharacterSpacing).ToString()!;
+                return ((object)((dynamic)source).WidthScale).ToString()!;
             }
             catch (Exception)
             {
@@ -107,7 +106,7 @@ internal sealed class TextStyleCache
             }
         }
 
-        AddinLog.Write($"Создан стиль текста: {name} (из «{source.Name}»: WidthScale={Read("WidthScale")}, CharacterSpacing={Read("CharacterSpacing")})");
+        AddinLog.Write($"Создан стиль текста: {name} (из «{source.Name}», WidthScale={Read("WidthScale")})");
         return style;
     }
 }
