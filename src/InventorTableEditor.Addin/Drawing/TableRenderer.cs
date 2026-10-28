@@ -22,7 +22,6 @@ internal static class TableRenderer
     public static void Draw(DrawingDocument document, SketchedSymbolDefinition definition, TableModel model, TransientGeometry geometry)
     {
         var metrics = new WpfTextMetrics(model.Style);
-        AddinLog.Write("Таблица: " + model.ToJson());
         var layout = TableLayout.Build(model, metrics);
         var styles = PrepareStyles(document, layout, model.Style, metrics);
 
@@ -93,17 +92,6 @@ internal static class TableRenderer
             canvas.AddLine(segment.X1, segment.Y1, segment.X2, segment.Y2, segment.WeightMm);
     }
 
-    /// <summary>Диагностика: где надпись должна стоять по расчёту и где её поставил Inventor, мм таблицы.</summary>
-    private static void LogPlacement(SketchCanvas canvas, Inventor.TextBox box, PlannedRun item, double left, CellText cell)
-    {
-        static string Mm(double value) => value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-        var actual = canvas.TryGetBoundsMm(box) is { } b
-            ? $"Inventor {Mm(b.Left)},{Mm(b.Top)}..{Mm(b.Right)},{Mm(b.Bottom)}"
-            : "Inventor —";
-        AddinLog.Write($"[{cell.Row},{cell.Column}] «{item.Run.Text}» {Mm(item.SizeMm)} мм: ячейка {Mm(cell.Top)}..{Mm(cell.Top + cell.Height)}, "
-                       + $"по расчёту верх {Mm(item.TopMm)}, базовая линия {Mm(item.BaselineMm)}, левый край {Mm(left)}; {actual}");
-    }
-
     /// <summary>
     /// Выводит текст ячейки: каждая строка — цепочка надписей (по одной на фрагмент с единым
     /// форматированием), расставленных <see cref="LinePlanner.PlanLine"/>. Жирный текст Inventor рисует
@@ -133,9 +121,7 @@ internal static class TableRenderer
             for (var i = 0; i < boxes.Count; i++)
             {
                 var item = corrected.Runs[i];
-                var left = corrected.ToTableX(item.BoxLeftMm);
-                canvas.Place(boxes[i].Box, left, item.TopMm);
-                LogPlacement(canvas, boxes[i].Box, item, left, cell);
+                canvas.Place(boxes[i].Box, corrected.ToTableX(item.BoxLeftMm), item.TopMm);
             }
 
             foreach (var underline in LinePlanner.Underlines(corrected, metrics))
