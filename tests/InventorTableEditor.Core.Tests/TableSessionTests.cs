@@ -330,14 +330,23 @@ public class TableSessionTests
     [Theory]
     [InlineData(0)]
     [InlineData(1.9)]
-    [InlineData(1001)]
     [InlineData(double.NaN)]
-    public void SetSizes_RejectOutOfRange(double value)
+    public void SetSizes_TooSmallIsNotApplied(double value)
     {
         var session = Session();
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetColumnWidth(value));
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetRowHeight(value));
+        Assert.False(session.SetColumnWidth(value));
+        Assert.False(session.SetRowHeight(value));
+        Assert.False(session.CanUndo);
+    }
+
+    [Fact]
+    public void SetSizes_TooLargeThrows()
+    {
+        var session = Session();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetColumnWidth(1001));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetRowHeight(1001));
     }
 
     [Fact]

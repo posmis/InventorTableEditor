@@ -321,8 +321,27 @@ public sealed class TableSession
         });
     }
 
-    /// <summary>Ширина текущего столбца; false — значение не изменилось.</summary>
-    public bool SetColumnWidth(double widthMm) => SetColumnWidth(Column, widthMm);
+    /// <summary>Полная ширина текущей ячейки (у объединённой — сумма её столбцов), мм.</summary>
+    public double CurrentWidth
+    {
+        get
+        {
+            var merge = Model.GetMerge(Row, Column);
+            return Enumerable.Range(merge.Left, merge.Right - merge.Left + 1).Sum(c => Model.ColumnWidths[c]);
+        }
+    }
+
+    /// <summary>
+    /// Ширина текущей ячейки. У объединённой меняется её правый столбец (остальные как были), так что
+    /// полная ширина становится заданной. false — значение не изменилось или правому столбцу не хватает
+    /// места (меньше наименьшей ширины).
+    /// </summary>
+    public bool SetColumnWidth(double widthMm)
+    {
+        var merge = Model.GetMerge(Row, Column);
+        var last = widthMm - (CurrentWidth - Model.ColumnWidths[merge.Right]);
+        return last >= MmParser.MinCellSize && SetColumnWidth(merge.Right, last);
+    }
 
     /// <summary>
     /// Ширина столбца; остальные столбцы не меняются. <paramref name="record"/> = false — без шага отмены
@@ -330,8 +349,18 @@ public sealed class TableSession
     /// </summary>
     public bool SetColumnWidth(int column, double widthMm, bool record = true) => SetSize(Model.ColumnWidths, column, widthMm, record);
 
-    /// <summary>Высота текущей строки; false — значение не изменилось.</summary>
-    public bool SetRowHeight(double heightMm) => SetSize(Model.RowHeights, Row, heightMm, record: true);
+    /// <summary>
+    /// Высота текущей ячейки (наименьшая — строка растёт под текст). У объединённой меняется её нижняя строка,
+    /// так что сумма заданных высот её строк становится заданной. false — не изменилось или нижней строке
+    /// не хватает места.
+    /// </summary>
+    public bool SetRowHeight(double heightMm)
+    {
+        var merge = Model.GetMerge(Row, Column);
+        var others = Enumerable.Range(merge.Top, merge.Bottom - merge.Top).Sum(r => Model.RowHeights[r]);
+        var last = heightMm - others;
+        return last >= MmParser.MinCellSize && SetSize(Model.RowHeights, merge.Bottom, last, record: true);
+    }
 
     private bool SetSize(List<double> sizes, int index, double value, bool record)
     {

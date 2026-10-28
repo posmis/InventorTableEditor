@@ -408,4 +408,46 @@ public class MergeTests
 
         Assert.Equal(new[] { new CellRange(0, 0, 0, 2) }, session.Model.Merges());
     }
+
+    [Fact]
+    public void Session_MergedWidthIsSum_SettingChangesRightColumn()
+    {
+        var session = new TableSession(Table());
+        session.Model.ColumnWidths[0] = 15;
+        session.Model.Merge(new CellRange(0, 0, 0, 1));
+        session.MoveTo(0, 0);
+
+        Assert.Equal(35, session.CurrentWidth);
+        Assert.True(session.SetColumnWidth(50));
+        Assert.Equal(new[] { 15.0, 35, 20 }, session.Model.ColumnWidths);
+
+        // Правому столбцу не остаётся 2 мм — не применяется.
+        Assert.False(session.SetColumnWidth(16));
+        Assert.Equal(50, session.CurrentWidth);
+    }
+
+    [Fact]
+    public void Session_MergedHeight_SettingChangesBottomRow()
+    {
+        var session = new TableSession(Table());
+        session.Model.Merge(new CellRange(0, 0, 1, 0));
+        session.MoveTo(1, 0);
+
+        Assert.True(session.SetRowHeight(30));
+        Assert.Equal(new[] { 10.0, 20, 10 }, session.Model.RowHeights);
+        Assert.False(session.SetRowHeight(11));
+    }
+
+    [Fact]
+    public void Session_SingleCellWidthAndHeight_Unchanged()
+    {
+        var session = new TableSession(Table());
+        session.MoveTo(1, 2);
+
+        Assert.Equal(20, session.CurrentWidth);
+        Assert.True(session.SetColumnWidth(25));
+        Assert.True(session.SetRowHeight(12));
+        Assert.Equal(25, session.Model.ColumnWidths[2]);
+        Assert.Equal(12, session.Model.RowHeights[1]);
+    }
 }

@@ -617,8 +617,8 @@ internal sealed class TableEditorWindow : Window
         };
         panel.Children.Add(_headerBox);
 
-        _columnWidthBox.ToolTip = "Ширина текущего столбца, мм";
-        _rowHeightBox.ToolTip = "Высота текущей строки, мм.\nЕсли текст не помещается, строка выше заданной —\nздесь показана фактическая высота.";
+        _columnWidthBox.ToolTip = "Ширина текущей ячейки, мм.\nУ объединённой — полная; при вводе меняется её правый столбец.";
+        _rowHeightBox.ToolTip = "Высота текущей ячейки, мм.\nЕсли текст не помещается, строка выше заданной —\nздесь показана фактическая высота.\nУ объединённой — полная; при вводе меняется её нижняя строка.";
         // При уходе из поля размера фокус не перехватывается: пользователь мог перейти в соседнее поле.
         _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
         _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
@@ -884,12 +884,13 @@ internal sealed class TableEditorWindow : Window
     /// </summary>
     private void UpdateSizeBoxes()
     {
-        var row = _session.Row;
-        var height = _layout != null && row + 1 < _layout.RowEdges.Count
-            ? _layout.RowEdges[row + 1] - _layout.RowEdges[row]
-            : Model.RowHeights[row];
+        // У объединённой ячейки — полная ширина и высота (сумма её столбцов и строк).
+        var merge = Model.GetMerge(_session.Row, _session.Column);
+        var height = _layout != null && merge.Bottom + 1 < _layout.RowEdges.Count
+            ? _layout.RowEdges[merge.Bottom + 1] - _layout.RowEdges[merge.Top]
+            : Enumerable.Range(merge.Top, merge.Bottom - merge.Top + 1).Sum(r => Model.RowHeights[r]);
 
-        _shownWidth = MmParser.Format(Model.ColumnWidths[_session.Column]);
+        _shownWidth = MmParser.Format(_session.CurrentWidth);
         _shownHeight = MmParser.Format(height);
         if (!_columnWidthBox.IsKeyboardFocusWithin)
             _columnWidthBox.Text = _shownWidth;
