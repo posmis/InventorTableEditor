@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Inventor;
 using InventorTableEditor.Core;
 using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
 using CellText = InventorTableEditor.Core.Layout.CellText;
 using TableStyle = InventorTableEditor.Core.Model.TableStyle;
+using TextRun = InventorTableEditor.Core.Model.TextRun;
 
 namespace InventorTableEditor.Addin.Drawing;
 
@@ -21,8 +21,9 @@ internal static class TableRenderer
 
     public static void Draw(DrawingDocument document, SketchedSymbolDefinition definition, TableModel model, TransientGeometry geometry)
     {
-        var layout = TableLayout.Build(model, new FontMetricsMeasurer(model.Style));
-        var styles = PrepareStyles(document, layout, model.Style);
+        var metrics = new WpfTextMetrics(model.Style);
+        var layout = TableLayout.Build(model, metrics);
+        var styles = PrepareStyles(document, layout, model.Style, metrics);
 
         IsDrawing = true;
         definition.Edit(out DrawingSketch sketch);
@@ -30,7 +31,10 @@ internal static class TableRenderer
         try
         {
             Clear(sketch);
-            DrawLayout(sketch, model, layout, styles, geometry);
+            var canvas = new SketchCanvas(sketch, geometry);
+            DrawGrid(canvas, layout);
+            foreach (var cell in layout.Texts)
+                DrawCellText(canvas, cell, model.Style, styles, metrics);
             saved = true;
         }
         finally
@@ -62,14 +66,14 @@ internal static class TableRenderer
     }
 
     /// <summary>Стили текста создаются до входа в эскиз символа, чтобы не менять стили во время его редактирования.</summary>
-    private static TextStyleCache PrepareStyles(DrawingDocument document, TableLayout layout, TableStyle style)
+    private static TextStyleCache PrepareStyles(DrawingDocument document, TableLayout layout, TableStyle style, ITextMetrics metrics)
     {
         var styles = new TextStyleCache(document);
         foreach (var cell in layout.Texts)
         {
             foreach (var line in cell.Lines)
             {
-                var plan = TextPlanner.PlanLine(line, style, cell);
+                var plan = LinePlanner.PlanLine(line, style, cell, metrics);
                 foreach (var item in plan.Runs)
                     StyleFor(styles, item.Run, style, plan.WidthScale);
             }
@@ -81,99 +85,47 @@ internal static class TableRenderer
     private static TextStyle StyleFor(TextStyleCache styles, TextRun run, TableStyle style, double widthScale) =>
         styles.Get(run.FontName ?? style.FontName, TableLayout.RenderedSize(run, style), run.Bold, run.Italic, underline: false, widthScale);
 
-    private static void DrawLayout(DrawingSketch sketch, TableModel model, TableLayout layout, TextStyleCache styles, TransientGeometry geometry)
+    private static void DrawGrid(SketchCanvas canvas, TableLayout layout)
     {
-        var insertion = sketch.SketchPoints.Add(Point(geometry, 0, 0), false);
-        TrySet(() => ((dynamic)insertion).InsertionPoint = true);
-
+        canvas.AddInsertionPoint();
         foreach (var segment in layout.Lines)
-        {
-            var line = sketch.SketchLines.AddByTwoPoints(
-                Point(geometry, segment.X1, segment.Y1),
-                Point(geometry, segment.X2, segment.Y2));
-            var weightCm = Units.MmToCm(segment.WeightMm);
-            TrySet(() => ((dynamic)line).LineWeight = weightCm);
-        }
-
-        foreach (var cell in layout.Texts)
-            DrawCellText(sketch, cell, model.Style, styles, geometry);
+            canvas.AddLine(segment.X1, segment.Y1, segment.X2, segment.Y2, segment.WeightMm);
     }
 
     /// <summary>
-    /// Выводит текст ячейки. Каждая строка — цепочка надписей (по одной на фрагмент с единым
-    /// форматированием), расставленных <see cref="TextPlanner.PlanLine"/>. Надпись Inventor — прямоугольник
-    /// от левого края букв до конца текста, по высоте — по очертаниям букв; её Origin — левый верхний угол.
-    /// Строка целиком сдвигается по выравниванию ячейки.
+    /// Выводит текст ячейки: каждая строка — цепочка надписей (по одной на фрагмент с единым
+    /// форматированием), расставленных <see cref="LinePlanner.PlanLine"/>. Жирный текст Inventor рисует
+    /// немного уже, чем по метрикам шрифта: ширина жирных надписей измеряется у Inventor, и строка
+    /// переставляется с этой поправкой. Подчёркивание — линиями эскиза.
     /// </summary>
-    private static void DrawCellText(DrawingSketch sketch, CellText cell, TableStyle style, TextStyleCache styles, TransientGeometry geometry)
+    private static void DrawCellText(SketchCanvas canvas, CellText cell, TableStyle style, TextStyleCache styles, ITextMetrics metrics)
     {
         foreach (var line in cell.Lines)
         {
-            var plan = TextPlanner.PlanLine(line, style, cell);
+            var plan = LinePlanner.PlanLine(line, style, cell, metrics);
+            var boxes = new List<(PlannedRun Item, Inventor.TextBox Box)>();
+            var deltas = new Dictionary<int, double>();
             foreach (var item in plan.Runs)
             {
-                var origin = Point(geometry, plan.OriginMm + item.BoxLeftMm * plan.WidthScale, item.TopMm);
-                var textStyle = StyleFor(styles, item.Run, style, plan.WidthScale);
-                var box = sketch.TextBoxes.AddFitted(origin, EscapeText(item.Run.Text), textStyle);
-                box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
-                box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
-                // После смены выравнивания точка привязки задаётся заново.
-                box.Origin = origin;
-                LogPlacement(box, textStyle, item, plan, style);
+                var box = canvas.AddText(item.Run.Text, StyleFor(styles, item.Run, style, plan.WidthScale));
+                boxes.Add((item, box));
+                if (item.Run.Bold && canvas.TryMeasureWidthMm(box) is { } actual)
+                {
+                    var expected = metrics.Measure(item.Run, item.Run.Text, item.SizeMm).BoxWidthMm;
+                    deltas[item.PenIndex] = actual - expected;
+                }
             }
 
-            foreach (var underline in TextPlanner.Underlines(plan, style))
+            // Inventor сообщает ширину без сжатия стиля, как и метрики: поправка — до сжатия.
+            var corrected = LinePlanner.WithWidthCorrections(plan, deltas, cell);
+            for (var i = 0; i < boxes.Count; i++)
             {
-                var stroke = sketch.SketchLines.AddByTwoPoints(
-                    Point(geometry, underline.X1Mm, underline.YMm),
-                    Point(geometry, underline.X2Mm, underline.YMm));
-                var weightCm = Units.MmToCm(style.UnderlineMm);
-                TrySet(() => ((dynamic)stroke).LineWeight = weightCm);
+                var item = corrected.Runs[i];
+                canvas.Place(boxes[i].Box, corrected.ToTableX(item.BoxLeftMm), item.TopMm);
             }
-        }
-    }
 
-    /// <summary>
-    /// Диагностика расстановки: где надпись должна быть по метрикам шрифта и где её поставил Inventor, мм.
-    /// </summary>
-    private static void LogPlacement(Inventor.TextBox box, TextStyle textStyle, PlannedRun item, LinePlan plan, TableStyle style)
-    {
-        string Mm(double value) => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-        var plannedLeft = plan.OriginMm + item.BoxLeftMm * plan.WidthScale;
-        var plannedRight = plan.OriginMm + (item.PenMm + TextPlanner.AdvanceMm(item.Run, item.Run.Text, style)) * plan.WidthScale;
-        var actual = "нет";
-        try
-        {
-            Box2d range = ((dynamic)box).RangeBox;
-            double width = ((dynamic)box).Width;
-            actual = $"RangeBox {Mm(Units.CmToMm(range.MinPoint.X))}..{Mm(Units.CmToMm(range.MaxPoint.X))}, Width {Mm(Units.CmToMm(width))}";
-        }
-        catch (Exception ex)
-        {
-            actual = ex.Message;
-        }
-
-        var run = item.Run;
-        AddinLog.Write($"«{run.Text}» {textStyle.Name}{(run.Bold ? " жирный" : "")}{(run.Italic ? " наклонный" : "")}, сжатие {Mm(plan.WidthScale)}: "
-                       + $"по шрифту {Mm(plannedLeft)}..{Mm(plannedRight)}; Inventor {actual}");
-    }
-
-    /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
-    private static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-
-    /// <summary>Точка эскиза: мм с осью Y вниз → см Inventor с осью Y вверх.</summary>
-    private static Point2d Point(TransientGeometry geometry, double xMm, double yMm) =>
-        geometry.CreatePoint2d(Units.MmToCm(xMm), -Units.MmToCm(yMm));
-
-    private static void TrySet(Action action)
-    {
-        try
-        {
-            action();
-        }
-        catch (Exception)
-        {
-            // Свойство недоступно в этой версии API — таблица всё равно строится.
+            foreach (var underline in LinePlanner.Underlines(corrected, metrics))
+                canvas.AddLine(underline.X1Mm, underline.YMm, underline.X2Mm, underline.YMm, style.UnderlineMm);
         }
     }
 }

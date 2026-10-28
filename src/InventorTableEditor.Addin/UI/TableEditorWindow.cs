@@ -34,6 +34,7 @@ internal sealed class TableEditorWindow : Window
     private readonly ComboBox _fontBox = new() { Width = 170, IsEditable = true, ToolTip = "Шрифт" };
     private readonly ComboBox _sizeBox = new() { Width = 60, IsEditable = true, ToolTip = "Высота шрифта, мм" };
     private readonly Dictionary<(int Row, int Column), CellEditor> _editors = new();
+    private readonly ITextMetrics _metrics;
 
     private ToggleButton? _boldButton;
     private ToggleButton? _italicButton;
@@ -50,7 +51,8 @@ internal sealed class TableEditorWindow : Window
     public TableEditorWindow(TableModel model, bool isNew)
     {
         Model = TableModel.FromJson(model.ToJson());
-        EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName, bold: false, italic: false)?.EmPerCapHeight ?? 1.4;
+        _metrics = new WpfTextMetrics(Model.Style);
+        EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName)?.EmPerCapHeight ?? 1.4;
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
         Width = 1000;
         Height = 650;
@@ -282,7 +284,7 @@ internal sealed class TableEditorWindow : Window
             ToolButton("Удалить", () => Model.RemoveColumn(_column))));
 
         panel.Children.Add(Group("Строка",
-            ToolButton("Вставить сверху", () => Model.InsertRow(Math.Max(_row, Model.HasHeader ? 1 : 0))),
+            ToolButton("Вставить сверху", () => Model.InsertRow(_row)),
             ToolButton("Вставить снизу", () => { Model.InsertRow(_row + 1); _row++; }),
             ToolButton("Удалить", () => Model.RemoveRow(_row))));
 
@@ -298,8 +300,9 @@ internal sealed class TableEditorWindow : Window
         };
         panel.Children.Add(_headerBox);
 
-        _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes();
-        _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes();
+        // При уходе из поля размера фокус не перехватывается: пользователь мог перейти в соседнее поле.
+        _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
+        _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
         _columnWidthBox.KeyDown += SizeBoxKeyDown;
         _rowHeightBox.KeyDown += SizeBoxKeyDown;
 
@@ -351,7 +354,7 @@ internal sealed class TableEditorWindow : Window
         }
     }
 
-    private void ApplySizeBoxes()
+    private void ApplySizeBoxes(bool focusEditor = true)
     {
         var changed = false;
         if (TryParseMm(_columnWidthBox.Text, out var width) && width != Model.ColumnWidths[_column])
@@ -367,7 +370,7 @@ internal sealed class TableEditorWindow : Window
         }
 
         if (changed)
-            RebuildGrid();
+            RebuildGrid(focusEditor);
     }
 
     private static bool TryParseMm(string text, out double value) => TryParseMm(text, 2, 1000, out value);
@@ -375,7 +378,7 @@ internal sealed class TableEditorWindow : Window
     private static bool TryParseMm(string text, double min, double max, out double value) =>
         double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min && value <= max;
 
-    private void RebuildGrid()
+    private void RebuildGrid(bool focusEditor = true)
     {
         _row = Math.Clamp(_row, 0, Model.RowCount - 1);
         _column = Math.Clamp(_column, 0, Model.ColumnCount - 1);
@@ -416,7 +419,8 @@ internal sealed class TableEditorWindow : Window
 
         UpdateSizeBoxes();
         RefreshLayout();
-        FocusActiveEditor();
+        if (focusEditor)
+            FocusActiveEditor();
     }
 
     private CellEditor CreateEditor(int row, int column)
@@ -475,7 +479,7 @@ internal sealed class TableEditorWindow : Window
     /// </summary>
     private void RefreshLayout()
     {
-        var layout = TableLayout.Build(Model, new FontMetricsMeasurer(Model.Style), includeEmptyCells: true);
+        var layout = TableLayout.Build(Model, _metrics, includeEmptyCells: true);
         for (var r = 0; r < Model.RowCount && r < _grid.RowDefinitions.Count; r++)
             _grid.RowDefinitions[r].Height = new GridLength((layout.RowEdges[r + 1] - layout.RowEdges[r]) * PxPerMm);
 

@@ -1,3 +1,4 @@
+using System.Collections;
 using Inventor;
 using InventorTableEditor.Core.Model;
 
@@ -34,23 +35,13 @@ internal static class TableStorage
     }
 
     /// <summary>Возвращает таблицу аддина среди выбранных объектов или null.</summary>
-    public static SketchedSymbol? FindTable(ObjectsEnumerator? objects)
-    {
-        if (objects == null)
-            return null;
+    public static SketchedSymbol? FindTable(ObjectsEnumerator? objects) => objects == null ? null : FindTable((IEnumerable)objects);
 
+    public static SketchedSymbol? FindTable(SelectSet selectSet) => FindTable((IEnumerable)selectSet);
+
+    private static SketchedSymbol? FindTable(IEnumerable objects)
+    {
         foreach (object item in objects)
-        {
-            if (item is SketchedSymbol symbol && IsTable(symbol.Definition))
-                return symbol;
-        }
-
-        return null;
-    }
-
-    public static SketchedSymbol? FindTable(SelectSet selectSet)
-    {
-        foreach (object item in selectSet)
         {
             if (item is SketchedSymbol symbol && IsTable(symbol.Definition))
                 return symbol;

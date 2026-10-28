@@ -1,34 +1,41 @@
-using System;
-using System.Collections.Generic;
-using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
 
-namespace InventorTableEditor.Addin.Drawing;
+namespace InventorTableEditor.Core.Layout;
 
-/// <summary>Фрагмент строки (мм, до сжатия по ширине): положение пера, левый край надписи от начала строки, верх букв от верха таблицы.</summary>
-internal sealed record PlannedRun(TextRun Run, double SizeMm, double PenMm, double BoxLeftMm, double BaselineMm, double TopMm);
+/// <summary>
+/// Видимый фрагмент строки (мм, до сжатия): номер в <see cref="LinePlan.Pens"/>, перо, левый край надписи
+/// от начала строки, базовая линия и верх букв от верха таблицы.
+/// </summary>
+public sealed record PlannedRun(int PenIndex, TextRun Run, double SizeMm, double PenMm, double BoxLeftMm, double BaselineMm, double TopMm);
 
 /// <summary>Фрагмент строки (включая фрагменты из одних пробелов): перо в начале, ширина и базовая линия, мм до сжатия.</summary>
-internal sealed record PenPosition(TextRun Run, double SizeMm, double PenMm, double AdvanceMm, double BaselineMm);
+public sealed record PenPosition(TextRun Run, double SizeMm, double PenMm, double AdvanceMm, double BaselineMm);
 
 /// <summary>Отрезок подчёркивания в координатах таблицы, мм: от X1 до X2 на высоте Y.</summary>
-internal sealed record Underline(double X1Mm, double X2Mm, double YMm);
+public sealed record UnderlineSegment(double X1Mm, double X2Mm, double YMm);
 
 /// <summary>
 /// Расстановка строки: видимые фрагменты, перья всех фрагментов (для курсора), коэффициент сжатия
-/// по ширине и положение начала строки (пера 0) в координатах таблицы с учётом выравнивания ячейки, мм.
+/// по ширине и положение начала строки (пера 0) в координатах таблицы с учётом выравнивания, мм.
 /// </summary>
-internal sealed record LinePlan(List<PlannedRun> Runs, List<PenPosition> Pens, double WidthScale, double OriginMm);
+public sealed record LinePlan(IReadOnlyList<PlannedRun> Runs, IReadOnlyList<PenPosition> Pens, double WidthScale, double OriginMm)
+{
+    /// <summary>X в координатах таблицы для положения пера (с учётом сжатия).</summary>
+    public double ToTableX(double penMm) => OriginMm + penMm * WidthScale;
+}
 
 /// <summary>
-/// Расстановка фрагментов строки по метрикам шрифта — общая для чертежа и предпросмотра в редакторе.
+/// Расстановка фрагментов строки по метрикам шрифта — общая для чертежа и редактора.
 /// Фрагменты идут по ширинам букв, как в Word; на стыке наклонного текста с прямым и перед верхним
-/// индексом добавляется поправка на наклон. Строка шире ячейки сжимается по ширине.
-/// Правила — docs/typography.md.
+/// индексом добавляется поправка на наклон; верхний и нижний индексы подряд ставятся друг под другом;
+/// строка шире ячейки сжимается по ширине. Правила — docs/typography.md.
 /// </summary>
-internal static class TextPlanner
+public static class LinePlanner
 {
-    public static LinePlan PlanLine(TextLine line, TableStyle style, CellText cell)
+    /// <summary>Наименьшее сжатие по ширине.</summary>
+    public const double MinWidthScale = 0.1;
+
+    public static LinePlan PlanLine(TextLine line, TableStyle style, CellText cell, ITextMetrics metrics)
     {
         var runs = new List<PlannedRun>();
         var pens = new List<PenPosition>();
@@ -36,8 +43,8 @@ internal static class TextPlanner
         TextRun? previous = null;
         var previousOverhang = 0.0;
 
-        // Индексы после основного текста: где началась группа индексов (конец основного текста
-        // без поправки на наклон), выступ последней буквы основного текста, правый край группы
+        // Группа индексов после основного текста: где она началась (конец основного текста без
+        // поправки на наклон), выступ последней буквы основного текста, правый край группы
         // и стоит ли уже второй индекс под первым.
         double stackStart = 0, baseOverhang = 0, stackEnd = 0;
         var baseItalic = false;
@@ -48,35 +55,33 @@ internal static class TextPlanner
             foreach (var run in segment.Runs)
             {
                 var size = TableLayout.RenderedSize(run, style);
-                var extents = Measure(run, size, style);
-                var startsStack = run.Script != ScriptPosition.Normal && (previous == null || previous.Script == ScriptPosition.Normal);
-                var secondIndex = previous != null && !stacked
-                                  && previous.Script != ScriptPosition.Normal && run.Script != ScriptPosition.Normal
-                                  && run.Script != previous.Script;
+                var extents = metrics.Measure(run, run.Text, size);
+                var isScript = run.Script != ScriptPosition.Normal;
+                var afterScript = previous != null && previous.Script != ScriptPosition.Normal;
 
-                if (startsStack)
+                if (isScript && !afterScript)
                 {
                     stackStart = pen;
                     stackEnd = pen;
                     stacked = false;
                 }
 
-                if (secondIndex)
+                if (isScript && afterScript && !stacked && run.Script != previous!.Script)
                 {
-                    // Верхний и нижний индексы друг под другом: второй начинается там же, где первый.
-                    // Верхний у наклонной буквы сдвинут на её выступ, нижний — нет (как в TeX).
+                    // Второй индекс под первым, с того же места. Верхний у наклонной буквы сдвинут
+                    // на её выступ, нижний — нет (как в TeX).
                     stacked = true;
                     pen = stackStart + (run.Script == ScriptPosition.Superscript && baseItalic ? baseOverhang : 0);
                 }
                 else
                 {
-                    if (previous != null && previous.Script != ScriptPosition.Normal && run.Script == ScriptPosition.Normal)
+                    if (afterScript && !isScript)
                         pen = Math.Max(pen, stackEnd);
                     if (previous != null && NeedsItalicCorrection(previous, run))
                         pen += previousOverhang;
                 }
 
-                if (run.Script == ScriptPosition.Normal)
+                if (!isScript)
                 {
                     baseItalic = run.Italic;
                     baseOverhang = extents.OverhangMm;
@@ -87,13 +92,13 @@ internal static class TextPlanner
                 pens.Add(new PenPosition(run, size, pen, extents.AdvanceMm, segment.BaselineMm));
                 if (!string.IsNullOrWhiteSpace(run.Text))
                 {
-                    runs.Add(new PlannedRun(run, size, pen, pen + extents.BoxLeftMm, segment.BaselineMm, segment.BaselineMm - extents.TopMm));
+                    runs.Add(new PlannedRun(pens.Count - 1, run, size, pen, pen + extents.BoxLeftMm, segment.BaselineMm, segment.BaselineMm - extents.TopMm));
                     left = Math.Min(left, pen + extents.BoxLeftMm);
                     right = Math.Max(right, pen + extents.AdvanceMm + extents.OverhangMm);
                 }
 
                 pen += extents.AdvanceMm;
-                if (run.Script != ScriptPosition.Normal)
+                if (isScript)
                     stackEnd = Math.Max(stackEnd, pen);
             }
         }
@@ -113,7 +118,7 @@ internal static class TextPlanner
         var available = cell.Width - 2 * style.PaddingMm;
         var width = right - left;
         var scale = width > available && available > 0
-            ? Math.Max(0.1, Math.Floor(available / width * 100) / 100)
+            ? Math.Max(MinWidthScale, Math.Floor(available / width * 100) / 100)
             : 1.0;
 
         var scaledWidth = width * scale;
@@ -128,13 +133,46 @@ internal static class TextPlanner
     }
 
     /// <summary>
+    /// Поправки ширины фрагментов по факту (жирный в Inventor уже, чем по шрифту): номер фрагмента
+    /// в <see cref="LinePlan.Pens"/> → изменение его ширины, мм до сжатия. Следующие фрагменты сдвигаются,
+    /// строка заново выравнивается в ячейке; сжатие не пересчитывается.
+    /// </summary>
+    public static LinePlan WithWidthCorrections(LinePlan plan, IReadOnlyDictionary<int, double> deltas, CellText cell)
+    {
+        if (deltas.Count == 0)
+            return plan;
+
+        var shifts = new double[plan.Pens.Count];
+        var shift = 0.0;
+        var pens = new List<PenPosition>();
+        for (var i = 0; i < plan.Pens.Count; i++)
+        {
+            shifts[i] = shift;
+            var delta = deltas.TryGetValue(i, out var value) ? value : 0;
+            pens.Add(plan.Pens[i] with { PenMm = plan.Pens[i].PenMm + shift, AdvanceMm = plan.Pens[i].AdvanceMm + delta });
+            shift += delta;
+        }
+
+        var runs = plan.Runs
+            .Select(r => r with { PenMm = r.PenMm + shifts[r.PenIndex], BoxLeftMm = r.BoxLeftMm + shifts[r.PenIndex] })
+            .ToList();
+        var origin = cell.Alignment switch
+        {
+            HorizontalTextAlignment.Center => plan.OriginMm - shift * plan.WidthScale / 2,
+            HorizontalTextAlignment.Right => plan.OriginMm - shift * plan.WidthScale,
+            _ => plan.OriginMm,
+        };
+        return new LinePlan(runs, pens, plan.WidthScale, origin);
+    }
+
+    /// <summary>
     /// Подчёркивание строки — своими линиями, а не шрифтом Inventor (у него слишком толстое).
     /// Соседние подчёркнутые фрагменты на одной базовой линии, включая пробелы между ними, — одна линия.
     /// </summary>
-    public static List<Underline> Underlines(LinePlan plan, TableStyle style)
+    public static List<UnderlineSegment> Underlines(LinePlan plan, ITextMetrics metrics)
     {
-        var result = new List<Underline>();
-        Underline? current = null;
+        var result = new List<UnderlineSegment>();
+        UnderlineSegment? current = null;
         foreach (var pen in plan.Pens)
         {
             if (!pen.Run.Underline)
@@ -143,16 +181,17 @@ internal static class TextPlanner
                 continue;
             }
 
-            var metrics = FontMetrics.Get(pen.Run.FontName ?? style.FontName, pen.Run.Bold, pen.Run.Italic);
-            var y = pen.BaselineMm + (metrics?.UnderlineOffsetMm(pen.SizeMm) ?? pen.SizeMm * 0.14);
-            var x1 = plan.OriginMm + pen.PenMm * plan.WidthScale;
-            var x2 = plan.OriginMm + (pen.PenMm + pen.AdvanceMm) * plan.WidthScale;
+            var y = pen.BaselineMm + metrics.UnderlineOffsetMm(pen.Run, pen.SizeMm);
+            var x1 = plan.ToTableX(pen.PenMm);
+            var x2 = plan.ToTableX(pen.PenMm + pen.AdvanceMm);
             if (current != null && Math.Abs(current.YMm - y) < 1e-6 && x1 <= current.X2Mm + 1e-6)
+            {
                 current = current with { X2Mm = Math.Max(current.X2Mm, x2) };
+            }
             else
             {
                 Flush();
-                current = new Underline(x1, x2, y);
+                current = new UnderlineSegment(x1, x2, y);
             }
         }
 
@@ -167,24 +206,12 @@ internal static class TextPlanner
         }
     }
 
-    /// <summary>Ширина текста в формате фрагмента по ширинам букв, мм (без сжатия).</summary>
-    public static double AdvanceMm(TextRun format, string text, TableStyle style) =>
-        Measure(format, TableLayout.RenderedSize(format, style), style, text).AdvanceMm;
-
-    /// <summary>Размеры фрагмента по метрикам шрифта; если шрифт не найден в Windows — грубая оценка.</summary>
-    private static TextExtents Measure(TextRun run, double size, TableStyle style, string? text = null)
-    {
-        text ??= run.Text;
-        var metrics = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic);
-        return metrics?.Measure(text, size, run.Italic) ?? new TextExtents(size, 0, text.Length * size * 0.6, 0);
-    }
-
     /// <summary>
     /// Поправка на наклон (как italic correction в TeX): после наклонного фрагмента верх букв выступает
     /// вправо и налезает на следующий. Нужна перед прямым текстом и перед верхним индексом;
     /// перед нижним индексом не нужна — он стоит ниже выступа.
     /// </summary>
-    private static bool NeedsItalicCorrection(TextRun previous, TextRun next) =>
+    public static bool NeedsItalicCorrection(TextRun previous, TextRun next) =>
         previous.Italic
         && next.Script != ScriptPosition.Subscript
         && (!next.Italic || next.Script != previous.Script);

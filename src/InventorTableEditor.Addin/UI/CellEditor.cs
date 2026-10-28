@@ -15,7 +15,7 @@ namespace InventorTableEditor.Addin.UI;
 
 /// <summary>
 /// Редактор текста ячейки, который и при наборе рисует текст ровно как на чертеже: расстановка
-/// <see cref="TextPlanner"/>, индексы, наклон как в Inventor, перенос и сжатие по ширине.
+/// <see cref="LinePlanner"/>, индексы, наклон как в Inventor, перенос и сжатие по ширине.
 /// Курсор и выделение ставятся по той же расстановке. Правка текста — <see cref="CellTextBuffer"/>.
 /// </summary>
 internal sealed class CellEditor : FrameworkElement
@@ -24,8 +24,9 @@ internal sealed class CellEditor : FrameworkElement
     private readonly double _pxPerMm;
     private readonly Brush _background;
     private readonly DispatcherTimer _blink = new() { Interval = TimeSpan.FromMilliseconds(530) };
+    private readonly ITextMetrics _metrics;
     private CellText? _layout;
-    private List<CellLine> _lines = new();
+    private CaretMap? _caretMap;
     private bool _caretVisible;
     private bool _selecting;
 
@@ -34,6 +35,7 @@ internal sealed class CellEditor : FrameworkElement
         _style = style;
         _pxPerMm = pxPerMm;
         _background = background;
+        _metrics = new WpfTextMetrics(style);
         Buffer = new CellTextBuffer(cell, style);
         Focusable = true;
         FocusVisualStyle = null;
@@ -64,7 +66,7 @@ internal sealed class CellEditor : FrameworkElement
         set
         {
             _layout = value;
-            _lines = BuildLines();
+            _caretMap = value == null ? null : CaretMap.Build(Buffer.ToCell(new TableCell()), value, _style, _metrics);
             InvalidateVisual();
         }
     }
@@ -174,7 +176,7 @@ internal sealed class CellEditor : FrameworkElement
                 break;
             case Key.Up:
             case Key.Down:
-                var target = VerticalMove(key == Key.Up ? -1 : 1);
+                var target = _caretMap?.VerticalMove(Buffer.Caret, key == Key.Up ? -1 : 1);
                 if (target == null)
                 {
                     NavigateRequested?.Invoke(this, key == Key.Up ? -1 : 1, 0);
@@ -184,10 +186,10 @@ internal sealed class CellEditor : FrameworkElement
                 Buffer.MoveTo(target.Value, shift);
                 break;
             case Key.Home:
-                Buffer.MoveTo(CurrentLine()?.Start ?? 0, shift);
+                Buffer.MoveTo(_caretMap?.LineOf(Buffer.Caret)?.Start ?? 0, shift);
                 break;
             case Key.End:
-                Buffer.MoveTo(CurrentLine()?.End ?? Buffer.Length, shift);
+                Buffer.MoveTo(_caretMap?.LineOf(Buffer.Caret)?.End ?? Buffer.Length, shift);
                 break;
             case Key.Back:
                 Buffer.Backspace();
@@ -318,22 +320,25 @@ internal sealed class CellEditor : FrameworkElement
 
     private void DrawText(DrawingContext context)
     {
+        if (_caretMap == null)
+            return;
+
         var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        foreach (var geometry in _lines)
+        foreach (var line in _caretMap.Lines)
         {
-            var plan = geometry.Plan;
+            var plan = line.Plan;
             foreach (var item in plan.Runs)
             {
                 var run = item.Run;
                 var fontName = run.FontName ?? _style.FontName;
-                var emPerCap = FontMetrics.Get(fontName, run.Bold, italic: false)?.EmPerCapHeight ?? EditorFonts.EmPerTextHeight;
+                var emPerCap = FontMetrics.Get(fontName)?.EmPerCapHeight ?? EditorFonts.EmPerTextHeight;
                 var typeface = new Typeface(EditorFonts.FontFor(fontName), FontStyles.Normal,
                     run.Bold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
                 var text = new FormattedText(run.Text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface,
                     item.SizeMm * emPerCap * _pxPerMm, Brushes.Black, pixelsPerDip);
 
                 // Начало фрагмента на базовой линии; сжатие по ширине и наклон — относительно него.
-                var x = X(plan.OriginMm + item.PenMm * plan.WidthScale);
+                var x = X(plan.ToTableX(item.PenMm));
                 var baseline = Y(item.BaselineMm);
                 var slant = run.Italic ? FontMetrics.ItalicSlant : 0.0;
                 var scale = plan.WidthScale;
@@ -345,29 +350,30 @@ internal sealed class CellEditor : FrameworkElement
 
             // Подчёркивание — линиями заданной толщины, как в чертеже.
             var underlinePen = new Pen(Brushes.Black, Math.Max(1, _style.UnderlineMm * _pxPerMm));
-            foreach (var underline in TextPlanner.Underlines(plan, _style))
+            foreach (var underline in LinePlanner.Underlines(plan, _metrics))
                 context.DrawLine(underlinePen, new Point(X(underline.X1Mm), Y(underline.YMm)), new Point(X(underline.X2Mm), Y(underline.YMm)));
         }
     }
 
     private void DrawSelection(DrawingContext context)
     {
-        if (!Buffer.HasSelection)
+        if (!Buffer.HasSelection || _caretMap == null)
             return;
 
         var brush = new SolidColorBrush(Color.FromArgb(0x60, 0x33, 0x99, 0xFF));
-        foreach (var line in _lines)
+        var text = Buffer.Text;
+        foreach (var line in _caretMap.Lines)
         {
             var start = Math.Max(Buffer.SelectionStart, line.Start);
             var end = Math.Min(Buffer.SelectionEnd, line.End);
-            // Выделенный перенос строки показываем узкой полосой после текста строки.
+            // Выделенный перенос строки (Enter) показываем узкой полосой после текста строки.
             var includesBreak = Buffer.SelectionEnd > line.End && Buffer.SelectionStart <= line.End
-                                && line.End < Buffer.Length && Buffer.Text[line.End] == '\n';
+                                && line.End < text.Length && text[line.End] == '\n';
             if (start > end || (start == end && !includesBreak))
                 continue;
 
-            var left = X(line.XMm[start - line.Start]);
-            var right = X(line.XMm[end - line.Start]) + (includesBreak ? line.SizeMm * 0.5 * _pxPerMm : 0);
+            var left = X(line.XOf(start));
+            var right = X(line.XOf(end)) + (includesBreak ? line.SizeMm * 0.5 * _pxPerMm : 0);
             var (top, bottom) = VerticalSpan(line);
             context.DrawRectangle(brush, null, new Rect(left, top, Math.Max(1, right - left), bottom - top));
         }
@@ -375,11 +381,11 @@ internal sealed class CellEditor : FrameworkElement
 
     private void DrawCaret(DrawingContext context)
     {
-        var line = CurrentLine();
+        var line = _caretMap?.LineOf(Buffer.Caret);
         if (line == null)
             return;
 
-        var x = X(line.XMm[Buffer.Caret - line.Start]);
+        var x = X(line.XOf(Math.Clamp(Buffer.Caret, line.Start, line.End)));
         var (top, bottom) = VerticalSpan(line);
         var slant = Buffer.TypingFormat.Italic ? FontMetrics.ItalicSlant : 0.0;
         var baseline = Y(line.BaselineMm);
@@ -389,129 +395,18 @@ internal sealed class CellEditor : FrameworkElement
             new Point(x + slant * (baseline - top), top));
     }
 
-    private (double Top, double Bottom) VerticalSpan(CellLine line) =>
+    private (double Top, double Bottom) VerticalSpan(CaretLine line) =>
         (Y(line.BaselineMm - line.SizeMm * 1.15), Y(line.BaselineMm + line.SizeMm * 0.35));
 
     private double X(double mm) => (mm - _layout!.Left) * _pxPerMm;
 
     private double Y(double mm) => (mm - _layout!.Top) * _pxPerMm;
 
-    /// <summary>Строка с курсором: на границе переноса — следующая строка (как в Word).</summary>
-    private CellLine? CurrentLine()
-    {
-        CellLine? found = null;
-        foreach (var line in _lines)
-        {
-            if (Buffer.Caret >= line.Start && Buffer.Caret <= line.End)
-                found = line;
-            if (found != null && Buffer.Caret < line.End)
-                break;
-        }
-
-        return found ?? _lines.LastOrDefault();
-    }
-
-    /// <summary>Позиция на строке выше или ниже с той же координатой X; null — дальше строк нет.</summary>
-    private int? VerticalMove(int direction)
-    {
-        var current = CurrentLine();
-        if (current == null)
-            return null;
-
-        var index = _lines.IndexOf(current) + direction;
-        if (index < 0 || index >= _lines.Count)
-            return null;
-
-        var x = current.XMm[Buffer.Caret - current.Start];
-        return Nearest(_lines[index], x);
-    }
-
-    private int HitTest(Point point)
-    {
-        if (_lines.Count == 0 || _layout == null)
-            return 0;
-
-        var yMm = point.Y / _pxPerMm + _layout.Top;
-        var line = _lines.FirstOrDefault(l => yMm <= l.BaselineMm + l.SizeMm * 0.35) ?? _lines[^1];
-        return Nearest(line, point.X / _pxPerMm + _layout.Left);
-    }
-
-    private static int Nearest(CellLine line, double xMm)
-    {
-        var best = 0;
-        for (var k = 1; k < line.XMm.Count; k++)
-        {
-            if (Math.Abs(line.XMm[k] - xMm) < Math.Abs(line.XMm[best] - xMm))
-                best = k;
-        }
-
-        return line.Start + best;
-    }
-
-    /// <summary>Строки ячейки с координатой X каждой позиции курсора (мм от угла таблицы).</summary>
-    private List<CellLine> BuildLines()
-    {
-        var result = new List<CellLine>();
-        if (_layout == null)
-            return result;
-
-        var cell = Buffer.ToCell(new TableCell());
-        var ranges = TextWrapper.WrapRanges(cell, _style, _layout.Width - 2 * _style.PaddingMm, new FontMetricsMeasurer(_style));
-        for (var i = 0; i < ranges.Count && i < _layout.Lines.Count; i++)
-        {
-            var (start, end) = ranges[i];
-            var line = _layout.Lines[i];
-            var plan = TextPlanner.PlanLine(line, _style, _layout);
-            result.Add(new CellLine(start, end, line.BaselineMm, line.FontSizeMm, plan,
-                CaretPositions(plan, start, end, TextWrapper.TrimmedEnd(cell, start, end))));
-        }
-
-        return result;
-    }
-
-    /// <summary>X каждой позиции курсора в строке: по перьям фрагментов и ширинам букв, пробелы в конце — после текста.</summary>
-    private List<double> CaretPositions(LinePlan plan, int start, int end, int trimmedEnd)
-    {
-        var positions = new List<double>();
-        var pens = plan.Pens;
-        double X0(double penMm) => plan.OriginMm + penMm * plan.WidthScale;
-
-        var runIndex = 0;
-        var offsetInRun = 0;
-        for (var k = start; k <= trimmedEnd; k++)
-        {
-            while (runIndex < pens.Count - 1 && offsetInRun >= pens[runIndex].Run.Text.Length)
-            {
-                runIndex++;
-                offsetInRun = 0;
-            }
-
-            if (pens.Count == 0)
-            {
-                positions.Add(plan.OriginMm);
-            }
-            else
-            {
-                var pen = pens[runIndex];
-                var prefix = pen.Run.Text[..Math.Min(offsetInRun, pen.Run.Text.Length)];
-                positions.Add(X0(pen.PenMm + TextPlanner.AdvanceMm(pen.Run, prefix, _style)));
-            }
-
-            offsetInRun++;
-        }
-
-        // Пробелы в конце строки не рисуются, но курсор по ним ходит.
-        var lastFormat = pens.Count > 0 ? pens[^1].Run : Buffer.TypingFormat;
-        var endX = positions[^1];
-        for (var k = trimmedEnd + 1; k <= end; k++)
-            positions.Add(endX + TextPlanner.AdvanceMm(lastFormat, new string(' ', k - trimmedEnd), _style) * plan.WidthScale);
-
-        return positions;
-    }
+    private int HitTest(Point point) =>
+        _caretMap == null || _layout == null
+            ? Buffer.Caret
+            : _caretMap.HitTest(point.X / _pxPerMm + _layout.Left, point.Y / _pxPerMm + _layout.Top);
 
     private static bool SameRuns(TableCell a, TableCell b) =>
         a.Runs.Count == b.Runs.Count && a.Runs.Zip(b.Runs).All(p => p.First.Text == p.Second.Text && p.First.SameFormat(p.Second));
-
-    /// <summary>Строка ячейки: диапазон символов, базовая линия, размер, расстановка и X позиций курсора.</summary>
-    private sealed record CellLine(int Start, int End, double BaselineMm, double SizeMm, LinePlan Plan, List<double> XMm);
 }

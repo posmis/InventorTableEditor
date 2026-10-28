@@ -133,4 +133,56 @@ public class TableModelTests
 
         Assert.Throws<InvalidDataException>(() => TableModel.FromJson(json));
     }
+
+    [Fact]
+    public void InsertRow_AboveHeader_GoesBelowIt()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetHeader(true);
+        model.SetText(0, 0, "Заголовок");
+
+        model.InsertRow(0);
+
+        Assert.True(model.IsHeaderRow(0));
+        Assert.Equal("Заголовок", model.GetText(0, 0));
+        Assert.Equal(3, model.RowCount);
+    }
+
+    [Fact]
+    public void RemoveHeaderRow_TurnsHeaderOff()
+    {
+        var model = TableModel.CreateEmpty(2, 1);
+        model.SetHeader(true);
+
+        model.RemoveRow(0);
+
+        Assert.False(model.HasHeader);
+    }
+
+    [Theory]
+    [InlineData("""{"ColumnWidths":[0],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""")]
+    [InlineData("""{"ColumnWidths":[20],"RowHeights":[-1],"Cells":[[{"Runs":[]}]]}""")]
+    [InlineData("""{"ColumnWidths":[20],"RowHeights":[8],"Cells":[]}""")]
+    [InlineData("""{"Style":{"FontSizeMm":0},"ColumnWidths":[20],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""")]
+    public void FromJson_RejectsBrokenTables(string json)
+    {
+        Assert.Throws<InvalidDataException>(() => TableModel.FromJson(json));
+    }
+
+    [Fact]
+    public void FromJson_RepairsMissingParts()
+    {
+        var json = """{"Style":null,"ColumnWidths":[20],"RowHeights":[8],"Cells":[[{"Runs":[null,{"Text":null},{"Text":"a"},{"Text":"b"}]}]]}""";
+
+        var model = TableModel.FromJson(json);
+
+        Assert.NotNull(model.Style);
+        Assert.Equal("ab", model.GetCell(0, 0).Runs.Single().Text);
+    }
+
+    [Fact]
+    public void FromJson_RejectsGarbage()
+    {
+        Assert.ThrowsAny<Exception>(() => TableModel.FromJson("не json"));
+    }
 }

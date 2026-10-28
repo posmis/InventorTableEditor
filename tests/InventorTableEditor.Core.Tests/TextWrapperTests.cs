@@ -5,16 +5,10 @@ namespace InventorTableEditor.Core.Tests;
 
 public class TextWrapperTests
 {
-    /// <summary>Каждый символ шириной в размер шрифта.</summary>
-    private sealed class FixedMeasurer : ITextMeasurer
-    {
-        public double AdvanceWidthMm(TextRun run, string text, double sizeMm) => text.Length * sizeMm;
-    }
-
     private static readonly TableStyle Style = new();
 
     private static string[] Lines(TableCell cell, double availableMm) =>
-        TextWrapper.Wrap(cell, Style, availableMm, new FixedMeasurer())
+        TextWrapper.Wrap(cell, Style, availableMm, FixedMetrics.Instance)
             .Select(line => string.Concat(line.Select(r => r.Text)))
             .ToArray();
 
@@ -56,7 +50,7 @@ public class TextWrapperTests
             },
         };
 
-        var lines = TextWrapper.Wrap(cell, Style, 30, new FixedMeasurer());
+        var lines = TextWrapper.Wrap(cell, Style, 30, FixedMetrics.Instance);
 
         Assert.Equal(new[] { "aaaa", "D2 bb" }, lines.Select(l => string.Concat(l.Select(r => r.Text))));
         Assert.Equal(new[] { "D", "2", " bb" }, lines[1].Select(r => r.Text));
@@ -77,7 +71,7 @@ public class TextWrapperTests
         model.SetText(0, 0, "aa bb cc");
 
         // Столбец 20 мм, отступы по 1 мм: 18 мм — 3 символа, три строки.
-        var layout = TableLayout.Build(model, new FixedMeasurer());
+        var layout = TableLayout.Build(model, FixedMetrics.Instance);
 
         Assert.Equal(3, layout.Texts.Single().Lines.Count);
         Assert.Equal(2 + 5 + 2 * 5 * 1.6, layout.Height, 6);
@@ -88,7 +82,7 @@ public class TextWrapperTests
     {
         var cell = TableCell.FromText("aa bb cc\nd", italic: false);
 
-        var ranges = TextWrapper.WrapRanges(cell, Style, 30, new FixedMeasurer());
+        var ranges = TextWrapper.WrapRanges(cell, Style, 30, FixedMetrics.Instance);
 
         // "aa bb " (0..6), "cc" (6..8), '\n' на 8, "d" (9..10).
         Assert.Equal(new[] { (0, 6), (6, 8), (9, 10) }, ranges);
@@ -98,6 +92,6 @@ public class TextWrapperTests
     [Fact]
     public void WrapRanges_EmptyCellHasOneEmptyLine()
     {
-        Assert.Equal(new[] { (0, 0) }, TextWrapper.WrapRanges(new TableCell(), Style, 30, new FixedMeasurer()));
+        Assert.Equal(new[] { (0, 0) }, TextWrapper.WrapRanges(new TableCell(), Style, 30, FixedMetrics.Instance));
     }
 }

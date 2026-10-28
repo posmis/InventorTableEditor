@@ -130,6 +130,7 @@ public class StandardAddInServer : ApplicationAddInServer
         try
         {
             var log = new System.Text.StringBuilder("Вкладки чертежа:");
+            var added = false;
             foreach (RibbonTab tab in _inventor.UserInterfaceManager.Ribbons["Drawing"].RibbonTabs)
             {
                 var internalName = tab.InternalName;
@@ -143,14 +144,20 @@ public class StandardAddInServer : ApplicationAddInServer
                 {
                     AddPanel(tab);
                     _tabsWithPanel.Add(internalName);
+                    added = true;
                 }
                 catch (Exception ex)
                 {
+                    // Повторять не нужно: вкладка не принимает панели, а журнал не должен расти при каждом переключении.
                     log.Append($"  ОШИБКА: {ex.Message}");
+                    _tabsWithPanel.Add(internalName);
+                    added = true;
                 }
             }
 
-            AddinLog.Write(log.ToString());
+            // Список вкладок пишется, только когда что-то изменилось, а не при каждом переключении документа.
+            if (added)
+                AddinLog.Write(log.ToString());
         }
         catch (Exception ex)
         {

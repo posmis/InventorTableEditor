@@ -2,13 +2,6 @@ using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Core.Layout;
 
-/// <summary>Измеритель ширины текста для переноса по словам.</summary>
-public interface ITextMeasurer
-{
-    /// <summary>Ширина текста фрагмента с полями букв (как он займёт место в строке), мм.</summary>
-    double AdvanceWidthMm(TextRun run, string text, double sizeMm);
-}
-
 /// <summary>
 /// Перенос текста ячейки по словам в пределах ширины. Принудительные переносы ('\n') сохраняются.
 /// Слово шире ячейки остаётся на отдельной строке (в чертеже оно сжимается по ширине).
@@ -19,7 +12,7 @@ public static class TextWrapper
     /// Строки после переноса как диапазоны символов текста ячейки (<see cref="TableCell.PlainText"/>):
     /// Start — первый символ, End — за последним; '\n' в диапазон не входит, пробелы в конце строки входят.
     /// </summary>
-    public static List<(int Start, int End)> WrapRanges(TableCell cell, TableStyle style, double availableMm, ITextMeasurer? measurer)
+    public static List<(int Start, int End)> WrapRanges(TableCell cell, TableStyle style, double availableMm, ITextMetrics? metrics)
     {
         var chars = Flatten(cell);
         var result = new List<(int Start, int End)>();
@@ -29,10 +22,10 @@ public static class TextWrapper
             if (i < chars.Count && chars[i].Ch != '\n')
                 continue;
 
-            if (measurer == null || availableMm <= 0)
+            if (metrics == null || availableMm <= 0)
                 result.Add((lineStart, i));
             else
-                result.AddRange(WrapLine(chars, lineStart, i, style, availableMm, measurer));
+                result.AddRange(WrapLine(chars, lineStart, i, style, availableMm, metrics));
             lineStart = i + 1;
         }
 
@@ -40,10 +33,10 @@ public static class TextWrapper
     }
 
     /// <summary>Строки после переноса как фрагменты: без пробелов в конце, соседние фрагменты одного формата склеены.</summary>
-    public static List<List<TextRun>> Wrap(TableCell cell, TableStyle style, double availableMm, ITextMeasurer? measurer)
+    public static List<List<TextRun>> Wrap(TableCell cell, TableStyle style, double availableMm, ITextMetrics? metrics)
     {
         var chars = Flatten(cell);
-        return WrapRanges(cell, style, availableMm, measurer)
+        return WrapRanges(cell, style, availableMm, metrics)
             .Select(range => ToRuns(chars, range.Start, TrimmedEnd(chars, range.Start, range.End)))
             .ToList();
     }
@@ -52,14 +45,14 @@ public static class TextWrapper
     public static int TrimmedEnd(TableCell cell, int start, int end) => TrimmedEnd(Flatten(cell), start, end);
 
     private static IEnumerable<(int Start, int End)> WrapLine(List<(char Ch, TextRun Format)> chars, int start, int end,
-        TableStyle style, double availableMm, ITextMeasurer measurer)
+        TableStyle style, double availableMm, ITextMetrics metrics)
     {
         var lineStart = start;
         var width = 0.0;
         foreach (var (wordStart, wordEnd) in Words(chars, start, end))
         {
             // Пробелы в конце слова не мешают ему поместиться: в конце строки они отбрасываются.
-            var visible = Width(chars, wordStart, TrimmedEnd(chars, wordStart, wordEnd), style, measurer);
+            var visible = Width(chars, wordStart, TrimmedEnd(chars, wordStart, wordEnd), style, metrics);
             if (wordStart > lineStart && width + visible > availableMm + 1e-6)
             {
                 yield return (lineStart, wordStart);
@@ -67,7 +60,7 @@ public static class TextWrapper
                 width = 0;
             }
 
-            width += Width(chars, wordStart, wordEnd, style, measurer);
+            width += Width(chars, wordStart, wordEnd, style, metrics);
         }
 
         yield return (lineStart, end);
@@ -91,8 +84,8 @@ public static class TextWrapper
             yield return (wordStart, end);
     }
 
-    private static double Width(List<(char Ch, TextRun Format)> chars, int start, int end, TableStyle style, ITextMeasurer measurer) =>
-        ToRuns(chars, start, end).Sum(r => measurer.AdvanceWidthMm(r, r.Text, TableLayout.RenderedSize(r, style)));
+    private static double Width(List<(char Ch, TextRun Format)> chars, int start, int end, TableStyle style, ITextMetrics metrics) =>
+        ToRuns(chars, start, end).Sum(r => metrics.Measure(r, r.Text, TableLayout.RenderedSize(r, style)).AdvanceMm);
 
     private static int TrimmedEnd(List<(char Ch, TextRun Format)> chars, int start, int end)
     {

@@ -156,4 +156,108 @@ public class CellTextBufferTests
         Assert.Equal(4, buffer.WordLeft(6));
         Assert.Equal(0, buffer.WordLeft(3));
     }
+
+    [Fact]
+    public void MoveTo_ClampsToText()
+    {
+        var buffer = Buffer("abc");
+
+        buffer.MoveTo(100, extend: false);
+        Assert.Equal(3, buffer.Caret);
+        buffer.MoveTo(-5, extend: true);
+        Assert.Equal(0, buffer.Caret);
+        Assert.Equal("abc", buffer.SelectedText);
+    }
+
+    [Fact]
+    public void Insert_NormalizesWindowsLineBreaks()
+    {
+        var buffer = new CellTextBuffer(new TableCell(), Style);
+
+        buffer.Insert("a\r\nb\rc");
+
+        Assert.Equal("a\nb\nc", buffer.Text);
+    }
+
+    [Fact]
+    public void DeleteAtEndAndBackspaceAtStart_DoNothingAndKeepUndoClean()
+    {
+        var buffer = Buffer("a");
+        buffer.MoveTo(1, extend: false);
+        buffer.Delete();
+        buffer.MoveTo(0, extend: false);
+        buffer.Backspace();
+
+        Assert.Equal("a", buffer.Text);
+        Assert.False(buffer.Undo());
+    }
+
+    [Fact]
+    public void ToggleWithoutSelection_DoesNotChangeTextOrUndo()
+    {
+        var buffer = Buffer("ab");
+        buffer.MoveTo(1, extend: false);
+
+        buffer.ToggleBold();
+
+        Assert.True(buffer.TypingFormat.Bold);
+        Assert.False(buffer.ToCell(new TableCell()).Runs.Single().Bold);
+        Assert.False(buffer.Undo());
+
+        // Сдвиг курсора сбрасывает формат набора на формат текста.
+        buffer.MoveTo(2, extend: false);
+        Assert.False(buffer.TypingFormat.Bold);
+    }
+
+    [Fact]
+    public void TypingAtLineStart_TakesFormatOfFollowingChar()
+    {
+        var cell = new TableCell { Runs = { new TextRun("a"), new TextRun("\n"), new TextRun("b") { Bold = true } } };
+        var buffer = new CellTextBuffer(cell, Style);
+
+        buffer.MoveTo(2, extend: false);
+
+        Assert.True(buffer.TypingFormat.Bold);
+    }
+
+    [Fact]
+    public void SetFontName_TableFontStoredAsNull()
+    {
+        var buffer = Buffer("ab");
+        buffer.SelectAll();
+
+        buffer.SetFontName("Arial");
+        Assert.Equal("Arial", buffer.ToCell(new TableCell()).Runs.Single().FontName);
+
+        buffer.SetFontName(Style.FontName.ToUpperInvariant());
+        Assert.Null(buffer.ToCell(new TableCell()).Runs.Single().FontName);
+    }
+
+    [Fact]
+    public void FormatChangeOnSelection_DoesNotLeakToOtherChars()
+    {
+        var buffer = Buffer("abc");
+        buffer.MoveTo(1, extend: false);
+        buffer.MoveTo(2, extend: true);
+
+        buffer.ToggleUnderline();
+
+        var runs = buffer.ToCell(new TableCell()).Runs;
+        Assert.Equal(new[] { "a", "b", "c" }, runs.Select(r => r.Text));
+        Assert.Equal(new[] { false, true, false }, runs.Select(r => r.Underline));
+    }
+
+    [Fact]
+    public void Redo_ClearedByNewEdit()
+    {
+        var buffer = Buffer("a");
+        buffer.MoveTo(1, extend: false);
+        buffer.Insert("b");
+        buffer.Undo();
+
+        buffer.Insert("c");
+
+        Assert.False(buffer.Redo());
+        Assert.Equal("ac", buffer.Text);
+    }
 }

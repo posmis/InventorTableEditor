@@ -47,8 +47,8 @@ public sealed class TableLayout
     /// <summary>
     /// Высота строки с учётом содержимого: заданная, но не меньше нужной под текст.
     /// </summary>
-    public static double EffectiveRowHeight(TableModel model, int row, ITextMeasurer? measurer = null) =>
-        EffectiveRowHeight(model, row, WrapRow(model, row, measurer));
+    public static double EffectiveRowHeight(TableModel model, int row, ITextMetrics? metrics = null) =>
+        EffectiveRowHeight(model, row, WrapRow(model, row, metrics));
 
     private static double EffectiveRowHeight(TableModel model, int row, List<List<List<TextRun>>> wrappedRow)
     {
@@ -58,9 +58,9 @@ public sealed class TableLayout
     }
 
     /// <summary>Строки текста каждой ячейки строки таблицы после переноса по ширине столбца.</summary>
-    private static List<List<List<TextRun>>> WrapRow(TableModel model, int row, ITextMeasurer? measurer) =>
+    private static List<List<List<TextRun>>> WrapRow(TableModel model, int row, ITextMetrics? metrics) =>
         Enumerable.Range(0, model.ColumnCount)
-            .Select(c => TextWrapper.Wrap(model.Cells[row][c], model.Style, model.ColumnWidths[c] - 2 * model.Style.PaddingMm, measurer))
+            .Select(c => TextWrapper.Wrap(model.Cells[row][c], model.Style, model.ColumnWidths[c] - 2 * model.Style.PaddingMm, metrics))
             .ToList();
 
     /// <summary>Размер шрифта фрагмента в чертеже, мм (индексы уменьшены).</summary>
@@ -132,12 +132,12 @@ public sealed class TableLayout
         return segments;
     }
 
-    /// <param name="measurer">Измеритель ширины текста для переноса по словам; null — без переноса.</param>
+    /// <param name="metrics">Метрики шрифта для переноса по словам; null — без переноса.</param>
     /// <param name="includeEmptyCells">Включать пустые ячейки в <see cref="Texts"/> (редактору нужно место курсора).</param>
-    public static TableLayout Build(TableModel model, ITextMeasurer? measurer = null, bool includeEmptyCells = false)
+    public static TableLayout Build(TableModel model, ITextMetrics? metrics = null, bool includeEmptyCells = false)
     {
         var style = model.Style;
-        var wrapped = Enumerable.Range(0, model.RowCount).Select(r => WrapRow(model, r, measurer)).ToList();
+        var wrapped = Enumerable.Range(0, model.RowCount).Select(r => WrapRow(model, r, metrics)).ToList();
 
         var columnEdges = new double[model.ColumnCount + 1];
         for (var c = 0; c < model.ColumnCount; c++)

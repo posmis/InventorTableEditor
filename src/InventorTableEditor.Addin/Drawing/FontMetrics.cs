@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
+using InventorTableEditor.Core.Layout;
 
 namespace InventorTableEditor.Addin.Drawing;
 
@@ -12,7 +13,7 @@ namespace InventorTableEditor.Addin.Drawing;
 /// </summary>
 internal sealed class FontMetrics
 {
-    private static readonly Dictionary<(string Font, bool Bold, bool Italic), FontMetrics?> Cache = new();
+    private static readonly Dictionary<string, FontMetrics?> Cache = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly GlyphTypeface _glyphs;
     private readonly double _capHeightEm;
@@ -40,15 +41,18 @@ internal sealed class FontMetrics
     /// <summary>Кегль (em) в долях высоты заглавной буквы: высота текста Inventor × это число = размер шрифта WPF.</summary>
     public double EmPerCapHeight => 1.0 / _capHeightEm;
 
-    /// <summary>Метрики шрифта или null, если шрифт не найден в Windows.</summary>
-    public static FontMetrics? Get(string font, bool bold, bool italic)
+    /// <summary>
+    /// Метрики шрифта или null, если шрифт не найден в Windows. Жирное начертание не запрашивается:
+    /// у шрифтов без своего жирного WPF расширяет буквы, а Inventor — нет.
+    /// </summary>
+    public static FontMetrics? Get(string font)
     {
-        var key = (font, bold, italic);
+        var key = font;
         if (Cache.TryGetValue(key, out var cached))
             return cached;
 
         FontMetrics? metrics = null;
-        var typeface = new Typeface(new FontFamily(font), FontStyles.Normal, bold ? FontWeights.Bold : FontWeights.Normal, FontStretches.Normal);
+        var typeface = new Typeface(new FontFamily(font), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         if (typeface.TryGetGlyphTypeface(out var glyphs))
             metrics = new FontMetrics(glyphs);
         else
@@ -67,8 +71,7 @@ internal sealed class FontMetrics
     /// <summary>
     /// Размеры текста при высоте шрифта <paramref name="heightMm"/>, мм, от начала текста (положения пера):
     /// подъём верха букв над базовой линией; левый край надписи Inventor (у наклонного текста нижние
-    /// выносные элементы уходят левее начала); ширина текста по ширинам букв; на сколько наклонные
-    /// буквы выступают правее этой ширины.
+    /// выносные элементы уходят левее начала); ширина текста по ширинам букв; правый край очертаний.
     /// </summary>
     public TextExtents Measure(string text, double heightMm, bool italic)
     {
@@ -90,7 +93,7 @@ internal sealed class FontMetrics
             pen += _glyphs.AdvanceWidths[glyph];
         }
 
-        return new TextExtents(top * scale, left * scale, pen * scale, Math.Max(0, right - pen) * scale);
+        return new TextExtents(top * scale, left * scale, pen * scale, right * scale);
     }
 
     /// <summary>Габарит буквы с наклоном, в долях кегля: X вправо от пера, Top — подъём над базовой линией.</summary>
@@ -133,9 +136,3 @@ internal sealed class FontMetrics
         }
     }
 }
-
-/// <summary>
-/// Размеры текста в мм от положения пера: верх букв над базовой линией, левый край надписи Inventor
-/// (≤ 0), ширина по ширинам букв, выступ наклонных букв правее этой ширины (≥ 0).
-/// </summary>
-internal readonly record struct TextExtents(double TopMm, double BoxLeftMm, double AdvanceMm, double OverhangMm);

@@ -56,9 +56,12 @@ public sealed class TableModel
         Cells[row][column] = cell;
     }
 
+    /// <summary>Вставляет пустую строку. Над строкой заголовков вставить нельзя — строка встанет под ней.</summary>
     public void InsertRow(int index)
     {
         if (index < 0 || index > RowCount) throw new ArgumentOutOfRangeException(nameof(index));
+        if (HasHeader && index == 0)
+            index = 1;
         RowHeights.Insert(index, Style.DefaultRowHeightMm);
         Cells.Insert(index, Enumerable.Range(0, ColumnCount).Select(_ => new TableCell()).ToList());
     }
@@ -172,9 +175,32 @@ public sealed class TableModel
         public List<List<string>> Cells { get; set; } = new();
     }
 
+    /// <summary>Проверяет данные, прочитанные из чертежа, и приводит к норме то, что можно исправить.</summary>
     private void Validate()
     {
-        if (ColumnCount == 0 || RowCount == 0 || Cells.Count != RowCount || Cells.Any(r => r.Count != ColumnCount))
-            throw new InvalidDataException("Повреждённые данные таблицы.");
+        Style ??= new TableStyle();
+        ColumnWidths ??= new List<double>();
+        RowHeights ??= new List<double>();
+        Cells ??= new List<List<TableCell>>();
+
+        if (ColumnCount == 0 || RowCount == 0 || Cells.Count != RowCount || Cells.Any(r => r == null || r.Count != ColumnCount))
+            throw new InvalidDataException("Повреждённые данные таблицы: число строк и столбцов не совпадает с ячейками.");
+        if (ColumnWidths.Concat(RowHeights).Any(size => !double.IsFinite(size) || size <= 0))
+            throw new InvalidDataException("Повреждённые данные таблицы: размеры строк и столбцов должны быть положительными.");
+        if (!(Style.FontSizeMm > 0) || !(Style.ScriptScale > 0) || !(Style.LineSpacing > 0) || Style.PaddingMm < 0)
+            throw new InvalidDataException("Повреждённые данные таблицы: недопустимые параметры оформления.");
+
+        foreach (var row in Cells)
+        {
+            for (var c = 0; c < row.Count; c++)
+            {
+                var cell = row[c] ?? new TableCell();
+                cell.Runs = (cell.Runs ?? new List<TextRun>()).Where(r => r != null).ToList();
+                foreach (var run in cell.Runs)
+                    run.Text ??= string.Empty;
+                cell.Normalize();
+                row[c] = cell;
+            }
+        }
     }
 }
