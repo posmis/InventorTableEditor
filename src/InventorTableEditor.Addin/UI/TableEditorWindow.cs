@@ -16,23 +16,34 @@ using InventorTableEditor.Core.Model;
 namespace InventorTableEditor.Addin.UI;
 
 /// <summary>
-/// Окно редактора таблицы. Сверху — форматирование текста, слева — структура и размеры,
-/// в центре — сетка ячеек. Каждая ячейка — <see cref="CellEditor"/>: текст и при наборе выглядит как на чертеже.
+/// Окно редактора таблицы в стиле Inventor: сверху лента форматирования, слева панель структуры
+/// (как в КОМПАС-3D), в центре таблица с масштабом как в Excel (Ctrl+колесо), снизу строка состояния.
+/// Каждая ячейка — <see cref="CellEditor"/>: текст и при наборе выглядит как на чертеже.
 /// Работает с копией модели; изменения возвращаются только по кнопке подтверждения.
 /// </summary>
 internal sealed class TableEditorWindow : Window
 {
-    /// <summary>Масштаб отображения: пикселей на мм.</summary>
-    private const double PxPerMm = 96.0 / 25.4 * 1.5;
+    /// <summary>Пикселей на мм при масштабе 100 % — натуральный размер на экране.</summary>
+    private const double PxPerMm = 96.0 / 25.4;
 
-    private static readonly Brush HeaderBackground = new SolidColorBrush(Color.FromRgb(0xF3, 0xF6, 0xFA));
+    private const double MinZoom = 0.25;
+    private const double MaxZoom = 4.0;
 
+    /// <summary>Масштаб запоминается до закрытия Inventor, как в Excel — для следующего открытия окна.</summary>
+    private static double _lastZoom = 1.5;
+
+    private static readonly Brush HeaderBackground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2));
+
+    private readonly ResourceDictionary _theme = ThemeLoader.Load();
     private readonly Grid _grid = new() { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
-    private readonly TextBox _columnWidthBox = new() { Width = 60 };
-    private readonly TextBox _rowHeightBox = new() { Width = 60 };
-    private readonly CheckBox _headerBox = new() { Content = "Заголовки столбцов", Margin = new Thickness(0, 8, 0, 0) };
-    private readonly ComboBox _fontBox = new() { Width = 170, IsEditable = true, ToolTip = "Шрифт" };
-    private readonly ComboBox _sizeBox = new() { Width = 60, IsEditable = true, ToolTip = "Высота шрифта, мм" };
+    private readonly ScaleTransform _zoomTransform = new(1, 1);
+    private readonly Slider _zoomSlider = new() { Minimum = MinZoom * 100, Maximum = MaxZoom * 100, Width = 130, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _zoomText = new() { Width = 42, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBox _columnWidthBox = new() { Width = 56 };
+    private readonly TextBox _rowHeightBox = new() { Width = 56 };
+    private readonly CheckBox _headerBox = new() { Content = "Строка заголовков", Margin = new Thickness(0, 2, 0, 0) };
+    private readonly ComboBox _fontBox = new() { Width = 168, IsEditable = true, ToolTip = "Шрифт", Margin = new Thickness(0, 0, 4, 0) };
+    private readonly ComboBox _sizeBox = new() { Width = 58, IsEditable = true, ToolTip = "Высота шрифта, мм" };
     private readonly Dictionary<(int Row, int Column), CellEditor> _editors = new();
     private readonly ITextMetrics _metrics;
 
@@ -53,15 +64,23 @@ internal sealed class TableEditorWindow : Window
         Model = TableModel.FromJson(model.ToJson());
         _metrics = new WpfTextMetrics(Model.Style);
         EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName)?.EmPerCapHeight ?? 1.4;
+
+        Resources.MergedDictionaries.Add(_theme);
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
-        Width = 1000;
-        Height = 650;
-        MinWidth = 600;
-        MinHeight = 400;
+        Width = 1100;
+        Height = 700;
+        MinWidth = 720;
+        MinHeight = 440;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
+        FontFamily = new FontFamily("Segoe UI");
+        FontSize = 12;
+        Background = ThemeBrush("WindowBrush");
+        Foreground = ThemeBrush("TextBrush");
+        UseLayoutRounding = true;
 
         Content = BuildLayout(isNew ? "Вставить в чертёж" : "Применить");
+        SetZoom(_lastZoom);
         RebuildGrid();
     }
 
@@ -69,90 +88,131 @@ internal sealed class TableEditorWindow : Window
 
     private CellEditor? ActiveEditor => _editors.TryGetValue((_row, _column), out var editor) ? editor : null;
 
+    private Brush ThemeBrush(string key) => (Brush)_theme[key];
+
+    private Style ThemeStyle(string key) => (Style)_theme[key];
+
     private UIElement BuildLayout(string acceptText)
     {
-        var root = new DockPanel { Margin = new Thickness(8) };
+        var root = new DockPanel();
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
-        var accept = new Button { Content = acceptText, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
-        accept.Click += (_, _) =>
-        {
-            ApplySizeBoxes();
-            DialogResult = true;
-        };
-        var cancel = new Button { Content = "Отмена", IsCancel = true, Padding = new Thickness(12, 4, 12, 4) };
-        buttons.Children.Add(accept);
-        buttons.Children.Add(cancel);
-        DockPanel.SetDock(buttons, Dock.Bottom);
-        root.Children.Add(buttons);
+        var ribbon = BuildRibbon();
+        DockPanel.SetDock(ribbon, Dock.Top);
+        root.Children.Add(ribbon);
 
-        var formatBar = BuildFormatBar();
-        DockPanel.SetDock(formatBar, Dock.Top);
-        root.Children.Add(formatBar);
+        var footer = BuildFooter(acceptText);
+        DockPanel.SetDock(footer, Dock.Bottom);
+        root.Children.Add(footer);
 
         var tools = BuildToolPanel();
         DockPanel.SetDock(tools, Dock.Left);
         root.Children.Add(tools);
 
-        var canvas = new Border { Background = Brushes.WhiteSmoke, Padding = new Thickness(16), Child = _grid };
-        root.Children.Add(new ScrollViewer
+        // Таблица на сером поле, как лист в Inventor; масштаб — через LayoutTransform (текст остаётся чётким).
+        var sheet = new Border
+        {
+            Background = Brushes.White,
+            Margin = new Thickness(24),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            Child = _grid,
+            LayoutTransform = _zoomTransform,
+        };
+        var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Content = canvas,
-        });
+            Background = ThemeBrush("CanvasBrush"),
+            Content = sheet,
+        };
+        scroll.PreviewMouseWheel += (_, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+                return;
+
+            // Ctrl+колесо — масштаб, как в Excel: шаг 10 %.
+            SetZoom(_zoomTransform.ScaleX + (e.Delta > 0 ? 0.1 : -0.1));
+            e.Handled = true;
+        };
+        root.Children.Add(scroll);
+
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.D0 && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+            {
+                SetZoom(1);
+                e.Handled = true;
+            }
+        };
 
         return root;
     }
 
-    /// <summary>Верхняя панель: форматирование выделенного текста (или текста, который будет набран).</summary>
-    private ToolBarTray BuildFormatBar()
-    {
-        var bar = new ToolBar();
-        SetupFontBoxes();
-        bar.Items.Add(_fontBox);
-        bar.Items.Add(_sizeBox);
-        bar.Items.Add(new Separator());
-        bar.Items.Add(_boldButton = ToggleFormatButton("Ж", "Жирный (Ctrl+B)", b => b.ToggleBold(), b => b.FontWeight = FontWeights.Bold));
-        bar.Items.Add(_italicButton = ToggleFormatButton("К", "Наклонный (Ctrl+I)", b => b.ToggleItalic(), b => b.FontStyle = FontStyles.Italic));
-        bar.Items.Add(_underlineButton = ToggleFormatButton("Ч", "Подчёркнутый (Ctrl+U)", b => b.ToggleUnderline(),
-            b => b.Content = new TextBlock { Text = "Ч", TextDecorations = TextDecorations.Underline }));
-        bar.Items.Add(new Separator());
-        bar.Items.Add(_superscriptButton = ToggleFormatButton("x²", "Надстрочный (Ctrl+Shift+=). Обычный текст — Ctrl+Пробел",
-            b => b.ToggleScript(ScriptPosition.Superscript), null));
-        bar.Items.Add(_subscriptButton = ToggleFormatButton("x₂", "Подстрочный (Ctrl+=). Обычный текст — Ctrl+Пробел",
-            b => b.ToggleScript(ScriptPosition.Subscript), null));
+    // ---------- Лента ----------
 
-        bar.Items.Add(new Separator());
-        bar.Items.Add(AlignmentButton("По левому краю", AlignmentIcons.Horizontal(HorizontalTextAlignment.Left),
-            () => SetHorizontalAlignment(HorizontalTextAlignment.Left)));
-        bar.Items.Add(AlignmentButton("По центру", AlignmentIcons.Horizontal(HorizontalTextAlignment.Center),
-            () => SetHorizontalAlignment(HorizontalTextAlignment.Center)));
-        bar.Items.Add(AlignmentButton("По правому краю", AlignmentIcons.Horizontal(HorizontalTextAlignment.Right),
-            () => SetHorizontalAlignment(HorizontalTextAlignment.Right)));
-        bar.Items.Add(new Separator());
-        bar.Items.Add(AlignmentButton("По верхнему краю", AlignmentIcons.Vertical(VerticalTextAlignment.Top),
-            () => SetVerticalAlignment(VerticalTextAlignment.Top)));
-        bar.Items.Add(AlignmentButton("По середине", AlignmentIcons.Vertical(VerticalTextAlignment.Middle),
-            () => SetVerticalAlignment(VerticalTextAlignment.Middle)));
-        bar.Items.Add(AlignmentButton("По нижнему краю", AlignmentIcons.Vertical(VerticalTextAlignment.Bottom),
-            () => SetVerticalAlignment(VerticalTextAlignment.Bottom)));
-        return new ToolBarTray { Margin = new Thickness(0, 0, 0, 8), ToolBars = { bar } };
+    /// <summary>Лента как в Inventor: группы кнопок с подписью снизу, разделённые тонкими линиями.</summary>
+    private Border BuildRibbon()
+    {
+        SetupFontBoxes();
+
+        var font = Row(_fontBox, _sizeBox);
+        var style = Row(
+            _boldButton = Toggle(Icons.Letter("Ж", FontWeights.Bold, FontStyles.Normal, false), "Жирный (Ctrl+B)", b => b.ToggleBold()),
+            _italicButton = Toggle(Icons.Letter("К", FontWeights.Normal, FontStyles.Italic, false), "Наклонный (Ctrl+I)", b => b.ToggleItalic()),
+            _underlineButton = Toggle(Icons.Letter("Ч", FontWeights.Normal, FontStyles.Normal, true), "Подчёркнутый (Ctrl+U)", b => b.ToggleUnderline()),
+            Gap(),
+            _superscriptButton = Toggle(Icons.Script(ScriptPosition.Superscript), "Верхний индекс (Ctrl+Shift+=)\nОбычный текст — Ctrl+Пробел",
+                b => b.ToggleScript(ScriptPosition.Superscript)),
+            _subscriptButton = Toggle(Icons.Script(ScriptPosition.Subscript), "Нижний индекс (Ctrl+=)\nОбычный текст — Ctrl+Пробел",
+                b => b.ToggleScript(ScriptPosition.Subscript)));
+        var alignment = Row(
+            Flat(Icons.Horizontal(HorizontalTextAlignment.Left), "По левому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Left)),
+            Flat(Icons.Horizontal(HorizontalTextAlignment.Center), "По центру", () => SetHorizontalAlignment(HorizontalTextAlignment.Center)),
+            Flat(Icons.Horizontal(HorizontalTextAlignment.Right), "По правому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Right)),
+            Gap(),
+            Flat(Icons.Vertical(VerticalTextAlignment.Top), "По верхнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Top)),
+            Flat(Icons.Vertical(VerticalTextAlignment.Middle), "По середине", () => SetVerticalAlignment(VerticalTextAlignment.Middle)),
+            Flat(Icons.Vertical(VerticalTextAlignment.Bottom), "По нижнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Bottom)));
+
+        var groups = new StackPanel { Orientation = Orientation.Horizontal };
+        groups.Children.Add(RibbonGroup("Шрифт", font));
+        groups.Children.Add(RibbonGroup("Начертание", style));
+        groups.Children.Add(RibbonGroup("Выравнивание", alignment));
+
+        return new Border
+        {
+            Background = ThemeBrush("PanelBrush"),
+            BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(6, 6, 6, 4),
+            Child = groups,
+        };
     }
 
-    /// <summary>Кнопка-переключатель: нажата, если формат включён у текста под курсором.</summary>
-    private ToggleButton ToggleFormatButton(string text, string tooltip, Action<CellTextBuffer> action, Action<ToggleButton>? decorate)
+    private Border RibbonGroup(string title, UIElement content)
     {
-        var button = new ToggleButton
-        {
-            Content = text,
-            ToolTip = tooltip,
-            MinWidth = 28,
-            FontSize = 14,
-            // Кнопка не забирает фокус, чтобы курсор и выделение в ячейке сохранились.
-            Focusable = false,
-        };
-        decorate?.Invoke(button);
+        var stack = new StackPanel { Margin = new Thickness(8, 0, 8, 0) };
+        stack.Children.Add(new Border { Height = 30, Child = content, VerticalAlignment = VerticalAlignment.Center });
+        stack.Children.Add(new TextBlock { Text = title, Style = ThemeStyle("RibbonGroupLabel") });
+        return new Border { BorderBrush = ThemeBrush("BorderBrush"), BorderThickness = new Thickness(0, 0, 1, 0), Child = stack };
+    }
+
+    private static StackPanel Row(params UIElement[] children)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var child in children)
+            row.Children.Add(child);
+        return row;
+    }
+
+    private static FrameworkElement Gap() => new Border { Width = 6 };
+
+    /// <summary>Переключатель формата: нажат, если формат включён у текста под курсором.</summary>
+    private ToggleButton Toggle(UIElement icon, string tooltip, Action<CellTextBuffer> action)
+    {
+        var button = new ToggleButton { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatToggle") };
         button.Click += (_, _) =>
         {
             ActiveEditor?.Edit(action);
@@ -162,12 +222,153 @@ internal sealed class TableEditorWindow : Window
         return button;
     }
 
-    private static Button AlignmentButton(string tooltip, UIElement icon, Action action)
+    private Button Flat(UIElement icon, string tooltip, Action action)
     {
-        var button = new Button { Content = icon, ToolTip = tooltip, MinWidth = 28, Focusable = false };
+        var button = new Button { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatButton") };
         button.Click += (_, _) => action();
         return button;
     }
+
+    // ---------- Левая панель ----------
+
+    /// <summary>Панель структуры: подпись и ряд кнопок, как на панели таблицы в КОМПАС-3D.</summary>
+    private Border BuildToolPanel()
+    {
+        var panel = new StackPanel { Margin = new Thickness(12, 2, 12, 12) };
+
+        panel.Children.Add(new TextBlock { Text = "СТРУКТУРА", Style = ThemeStyle("SectionHeader") });
+        panel.Children.Add(LabeledRow("Столбец:",
+            Structure(Icons.Column(0, Icons.Badge.Add), "Вставить столбец слева", () => Model.InsertColumn(_column)),
+            Structure(Icons.Column(2, Icons.Badge.Add), "Вставить столбец справа", () => { Model.InsertColumn(_column + 1); _column++; }),
+            Structure(Icons.Column(1, Icons.Badge.Remove), "Удалить столбец", () => Model.RemoveColumn(_column))));
+        panel.Children.Add(LabeledRow("Строка:",
+            Structure(Icons.Row(0, Icons.Badge.Add), "Вставить строку сверху", () => Model.InsertRow(_row)),
+            Structure(Icons.Row(2, Icons.Badge.Add), "Вставить строку снизу", () => { Model.InsertRow(_row + 1); _row++; }),
+            Structure(Icons.Row(1, Icons.Badge.Remove), "Удалить строку", () => Model.RemoveRow(_row))));
+
+        panel.Children.Add(new TextBlock { Text = "РАЗМЕРЫ, ММ", Style = ThemeStyle("SectionHeader") });
+        panel.Children.Add(LabeledRow("Ширина:", SizeField(_columnWidthBox)));
+        panel.Children.Add(LabeledRow("Высота:", SizeField(_rowHeightBox)));
+
+        panel.Children.Add(new TextBlock { Text = "ТАБЛИЦА", Style = ThemeStyle("SectionHeader") });
+        _headerBox.Click += (_, _) =>
+        {
+            Model.SetHeader(_headerBox.IsChecked == true);
+            _row = 0;
+            RebuildGrid();
+        };
+        panel.Children.Add(_headerBox);
+
+        _columnWidthBox.ToolTip = "Ширина текущего столбца, мм";
+        _rowHeightBox.ToolTip = "Высота текущей строки, мм (растёт под текст)";
+        // При уходе из поля размера фокус не перехватывается: пользователь мог перейти в соседнее поле.
+        _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
+        _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
+        _columnWidthBox.KeyDown += SizeBoxKeyDown;
+        _rowHeightBox.KeyDown += SizeBoxKeyDown;
+
+        return new Border
+        {
+            Width = 196,
+            Background = ThemeBrush("PanelBrush"),
+            BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = panel,
+        };
+    }
+
+    private StackPanel LabeledRow(string label, params UIElement[] children)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+        row.Children.Add(new TextBlock { Text = label, Style = ThemeStyle("RowLabel") });
+        foreach (var child in children)
+            row.Children.Add(child);
+        return row;
+    }
+
+    private UIElement SizeField(TextBox box)
+    {
+        box.Style = ThemeStyle("FieldBox");
+        return box;
+    }
+
+    private Button Structure(UIElement icon, string tooltip, Action action)
+    {
+        var button = new Button { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatButton"), Margin = new Thickness(0, 0, 2, 0) };
+        button.Click += (_, _) =>
+        {
+            try
+            {
+                action();
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+
+            RebuildGrid();
+        };
+        return button;
+    }
+
+    // ---------- Строка состояния ----------
+
+    /// <summary>Подсказки и масштаб слева, кнопки диалога справа.</summary>
+    private Border BuildFooter(string acceptText)
+    {
+        var accept = new Button { Content = acceptText, Style = ThemeStyle("PrimaryButton"), IsDefault = false, Margin = new Thickness(0, 0, 8, 0) };
+        accept.Click += (_, _) =>
+        {
+            ApplySizeBoxes();
+            DialogResult = true;
+        };
+        var cancel = new Button { Content = "Отмена", Style = ThemeStyle("SecondaryButton"), IsCancel = true };
+
+        _zoomSlider.ValueChanged += (_, e) => SetZoom(e.NewValue / 100);
+        var zoomOut = Flat(new TextBlock { Text = "−", FontSize = 14 }, "Уменьшить (Ctrl+колесо вниз)", () => SetZoom(_zoomTransform.ScaleX - 0.1));
+        var zoomIn = Flat(new TextBlock { Text = "+", FontSize = 14 }, "Увеличить (Ctrl+колесо вверх)", () => SetZoom(_zoomTransform.ScaleX + 0.1));
+        var zoomReset = Flat(_zoomText, "Натуральный размер, 100 % (Ctrl+0)", () => SetZoom(1));
+
+        var hint = new TextBlock
+        {
+            Text = "Ctrl+колесо — масштаб · Tab — следующая ячейка · Enter — новая строка в ячейке",
+            Foreground = ThemeBrush("MutedTextBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var bar = new DockPanel { LastChildFill = true };
+        var buttons = Row(accept, cancel);
+        DockPanel.SetDock(buttons, Dock.Right);
+        bar.Children.Add(buttons);
+        var zoom = Row(zoomOut, _zoomSlider, zoomIn, zoomReset);
+        zoom.Margin = new Thickness(0, 0, 24, 0);
+        DockPanel.SetDock(zoom, Dock.Right);
+        bar.Children.Add(zoom);
+        bar.Children.Add(hint);
+
+        return new Border
+        {
+            Background = ThemeBrush("PanelBrush"),
+            BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(12, 8, 12, 8),
+            Child = bar,
+        };
+    }
+
+    private void SetZoom(double zoom)
+    {
+        zoom = Math.Round(Math.Clamp(zoom, MinZoom, MaxZoom), 2);
+        _lastZoom = zoom;
+        _zoomTransform.ScaleX = zoom;
+        _zoomTransform.ScaleY = zoom;
+        _zoomText.Text = $"{zoom * 100:0} %";
+        if (Math.Abs(_zoomSlider.Value - zoom * 100) > 0.5)
+            _zoomSlider.Value = zoom * 100;
+    }
+
+    // ---------- Формат текста ----------
 
     private void SetupFontBoxes()
     {
@@ -243,7 +444,7 @@ internal sealed class TableEditorWindow : Window
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => editor.Focus()));
     }
 
-    /// <summary>Показывает на панели шрифт, размер и включённые форматы текста под курсором.</summary>
+    /// <summary>Показывает на ленте шрифт, размер и включённые форматы текста под курсором.</summary>
     private void SyncFormatBar()
     {
         var editor = ActiveEditor;
@@ -274,76 +475,7 @@ internal sealed class TableEditorWindow : Window
             button.IsChecked = value;
     }
 
-    private StackPanel BuildToolPanel()
-    {
-        var panel = new StackPanel { Width = 190, Margin = new Thickness(0, 0, 8, 0) };
-
-        panel.Children.Add(Group("Столбец",
-            ToolButton("Вставить слева", () => Model.InsertColumn(_column)),
-            ToolButton("Вставить справа", () => { Model.InsertColumn(_column + 1); _column++; }),
-            ToolButton("Удалить", () => Model.RemoveColumn(_column))));
-
-        panel.Children.Add(Group("Строка",
-            ToolButton("Вставить сверху", () => Model.InsertRow(_row)),
-            ToolButton("Вставить снизу", () => { Model.InsertRow(_row + 1); _row++; }),
-            ToolButton("Удалить", () => Model.RemoveRow(_row))));
-
-        panel.Children.Add(Group("Размеры, мм",
-            SizeRow("Ширина столбца", _columnWidthBox),
-            SizeRow("Высота строки", _rowHeightBox)));
-
-        _headerBox.Click += (_, _) =>
-        {
-            Model.SetHeader(_headerBox.IsChecked == true);
-            _row = 0;
-            RebuildGrid();
-        };
-        panel.Children.Add(_headerBox);
-
-        // При уходе из поля размера фокус не перехватывается: пользователь мог перейти в соседнее поле.
-        _columnWidthBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
-        _rowHeightBox.LostFocus += (_, _) => ApplySizeBoxes(focusEditor: false);
-        _columnWidthBox.KeyDown += SizeBoxKeyDown;
-        _rowHeightBox.KeyDown += SizeBoxKeyDown;
-
-        return panel;
-    }
-
-    private static GroupBox Group(string header, params UIElement[] children)
-    {
-        var stack = new StackPanel { Margin = new Thickness(4) };
-        foreach (var child in children)
-            stack.Children.Add(child);
-        return new GroupBox { Header = header, Content = stack, Margin = new Thickness(0, 0, 0, 8) };
-    }
-
-    private Button ToolButton(string text, Action action)
-    {
-        var button = new Button { Content = text, Margin = new Thickness(0, 2, 0, 2), Padding = new Thickness(4, 2, 4, 2) };
-        button.Click += (_, _) =>
-        {
-            try
-            {
-                action();
-            }
-            catch (InvalidOperationException ex)
-            {
-                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-
-            RebuildGrid();
-        };
-        return button;
-    }
-
-    private static DockPanel SizeRow(string label, TextBox box)
-    {
-        var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
-        DockPanel.SetDock(box, Dock.Right);
-        row.Children.Add(box);
-        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
-        return row;
-    }
+    // ---------- Размеры ----------
 
     private void SizeBoxKeyDown(object sender, KeyEventArgs e)
     {
@@ -378,6 +510,14 @@ internal sealed class TableEditorWindow : Window
     private static bool TryParseMm(string text, double min, double max, out double value) =>
         double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min && value <= max;
 
+    private void UpdateSizeBoxes()
+    {
+        _columnWidthBox.Text = Model.ColumnWidths[_column].ToString("0.##", CultureInfo.CurrentCulture);
+        _rowHeightBox.Text = Model.RowHeights[_row].ToString("0.##", CultureInfo.CurrentCulture);
+    }
+
+    // ---------- Сетка таблицы ----------
+
     private void RebuildGrid(bool focusEditor = true)
     {
         _row = Math.Clamp(_row, 0, Model.RowCount - 1);
@@ -394,8 +534,9 @@ internal sealed class TableEditorWindow : Window
         foreach (var unused in Model.RowHeights)
             _grid.RowDefinitions.Add(new RowDefinition());
 
-        var outer = Model.Style.OuterLineMm * PxPerMm;
-        var inner = Math.Max(1, Model.Style.InnerLineMm * PxPerMm);
+        // Линии таблицы — как на чертеже: рамка и линия под заголовками толще разделителей.
+        var outer = Math.Max(1, Model.Style.OuterLineMm * PxPerMm);
+        var inner = Math.Max(0.5, Model.Style.InnerLineMm * PxPerMm);
 
         for (var r = 0; r < Model.RowCount; r++)
         {
@@ -426,7 +567,7 @@ internal sealed class TableEditorWindow : Window
     private CellEditor CreateEditor(int row, int column)
     {
         var background = Model.IsHeaderRow(row) ? HeaderBackground : Brushes.White;
-        var editor = new CellEditor(Model.GetCell(row, column), Model.Style, PxPerMm, background);
+        var editor = new CellEditor(Model.GetCell(row, column), Model.Style, PxPerMm, background, ThemeBrush("AccentBrush"));
 
         editor.ContentChanged += e =>
         {
@@ -441,7 +582,7 @@ internal sealed class TableEditorWindow : Window
             UpdateSizeBoxes();
             SyncFormatBar();
         };
-        editor.NavigateRequested += (_, rows, columns) => Navigate(row + rows, column + columns, rows, columns);
+        editor.NavigateRequested += (_, rows, columns) => Navigate(row + rows, column + columns, columns);
         return editor;
     }
 
@@ -449,7 +590,7 @@ internal sealed class TableEditorWindow : Window
     /// Переход в соседнюю ячейку: Tab — следующая (в конце строки — первая ячейка следующей строки),
     /// стрелки вверх/вниз с первой/последней строки текста — ячейка выше/ниже.
     /// </summary>
-    private void Navigate(int row, int column, int rowStep, int columnStep)
+    private void Navigate(int row, int column, int columnStep)
     {
         if (columnStep != 0)
         {
@@ -488,11 +629,5 @@ internal sealed class TableEditorWindow : Window
             if (_editors.TryGetValue((text.Row, text.Column), out var editor))
                 editor.Layout = text;
         }
-    }
-
-    private void UpdateSizeBoxes()
-    {
-        _columnWidthBox.Text = Model.ColumnWidths[_column].ToString("0.##", CultureInfo.CurrentCulture);
-        _rowHeightBox.Text = Model.RowHeights[_row].ToString("0.##", CultureInfo.CurrentCulture);
     }
 }

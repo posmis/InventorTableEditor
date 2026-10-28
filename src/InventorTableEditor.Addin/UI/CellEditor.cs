@@ -23,6 +23,7 @@ internal sealed class CellEditor : FrameworkElement
     private readonly TableStyle _style;
     private readonly double _pxPerMm;
     private readonly Brush _background;
+    private readonly Pen _focusPen;
     private readonly DispatcherTimer _blink = new() { Interval = TimeSpan.FromMilliseconds(530) };
     /// <summary>Толщина обводки жирного текста в долях кегля.</summary>
     private const double BoldStroke = 0.035;
@@ -33,11 +34,13 @@ internal sealed class CellEditor : FrameworkElement
     private bool _caretVisible;
     private bool _selecting;
 
-    public CellEditor(TableCell cell, TableStyle style, double pxPerMm, Brush background)
+    public CellEditor(TableCell cell, TableStyle style, double pxPerMm, Brush background, Brush accent)
     {
         _style = style;
         _pxPerMm = pxPerMm;
         _background = background;
+        _focusPen = new Pen(accent.CloneCurrentValue(), 2);
+        _focusPen.Freeze();
         _metrics = new WpfTextMetrics(style);
         Buffer = new CellTextBuffer(cell, style);
         Focusable = true;
@@ -312,13 +315,17 @@ internal sealed class CellEditor : FrameworkElement
     protected override void OnRender(DrawingContext context)
     {
         context.DrawRectangle(_background, null, new Rect(RenderSize));
-        if (_layout == null)
-            return;
+        if (_layout != null)
+        {
+            DrawSelection(context);
+            DrawText(context);
+            if (_caretVisible && IsKeyboardFocused)
+                DrawCaret(context);
+        }
 
-        DrawSelection(context);
-        DrawText(context);
-        if (_caretVisible && IsKeyboardFocused)
-            DrawCaret(context);
+        // Текущая ячейка — синей рамкой, как в Excel.
+        if (IsKeyboardFocused && RenderSize.Width > 2 && RenderSize.Height > 2)
+            context.DrawRectangle(null, _focusPen, new Rect(1, 1, RenderSize.Width - 2, RenderSize.Height - 2));
     }
 
     private void DrawText(DrawingContext context)

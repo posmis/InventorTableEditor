@@ -35,6 +35,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Тема загружается во время работы (XamlReader), а не компилируется как страница. -->
+    <Page Remove="UI\Theme.xaml" />
+    <EmbeddedResource Include="UI\Theme.xaml" LogicalName="InventorTableEditor.Theme.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="InventorTableEditor.addin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
