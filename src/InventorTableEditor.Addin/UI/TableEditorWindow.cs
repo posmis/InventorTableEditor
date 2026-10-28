@@ -1,12 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using InventorTableEditor.Addin.Drawing;
+using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Addin.UI;
@@ -31,6 +35,15 @@ internal sealed class TableEditorWindow : Window
 
     private readonly ComboBox _fontBox = new() { Width = 170, IsEditable = true, ToolTip = "Шрифт" };
     private readonly ComboBox _sizeBox = new() { Width = 60, IsEditable = true, ToolTip = "Высота шрифта, мм" };
+
+    private ToggleButton? _boldButton;
+    private ToggleButton? _italicButton;
+    private ToggleButton? _underlineButton;
+    private ToggleButton? _superscriptButton;
+    private ToggleButton? _subscriptButton;
+
+    /// <summary>Предпросмотр каждой ячейки — как она будет выглядеть на чертеже.</summary>
+    private readonly Dictionary<(int Row, int Column), CellPreview> _previews = new();
 
     /// <summary>Списки шрифта и размера обновляются из выделения — в это время их события игнорируются.</summary>
     private bool _syncingFormat;
@@ -99,13 +112,15 @@ internal sealed class TableEditorWindow : Window
         bar.Items.Add(_fontBox);
         bar.Items.Add(_sizeBox);
         bar.Items.Add(new Separator());
-        bar.Items.Add(FormatButton("Ж", "Жирный (Ctrl+B)", () => Execute(EditingCommands.ToggleBold), b => b.FontWeight = FontWeights.Bold));
-        bar.Items.Add(FormatButton("К", "Курсив (Ctrl+I)", () => Execute(EditingCommands.ToggleItalic), b => b.FontStyle = FontStyles.Italic));
-        bar.Items.Add(FormatButton("Ч", "Подчёркнутый (Ctrl+U)", () => Execute(EditingCommands.ToggleUnderline),
+        bar.Items.Add(_boldButton = ToggleFormatButton("Ж", "Жирный (Ctrl+B)", () => Execute(EditingCommands.ToggleBold), b => b.FontWeight = FontWeights.Bold));
+        bar.Items.Add(_italicButton = ToggleFormatButton("К", "Наклонный (Ctrl+I)", () => Execute(EditingCommands.ToggleItalic), b => b.FontStyle = FontStyles.Italic));
+        bar.Items.Add(_underlineButton = ToggleFormatButton("Ч", "Подчёркнутый (Ctrl+U)", () => Execute(EditingCommands.ToggleUnderline),
             b => b.Content = new TextBlock { Text = "Ч", TextDecorations = TextDecorations.Underline }));
         bar.Items.Add(new Separator());
-        bar.Items.Add(FormatButton("x²", "Надстрочный (Ctrl+Shift+=)", () => ToggleScript(BaselineAlignment.Superscript), null));
-        bar.Items.Add(FormatButton("x₂", "Подстрочный (Ctrl+=)", () => ToggleScript(BaselineAlignment.Subscript), null));
+        bar.Items.Add(_superscriptButton = ToggleFormatButton("x²", "Надстрочный (Ctrl+Shift+=). Обычный текст — Ctrl+Пробел",
+            () => ToggleScript(BaselineAlignment.Superscript), null));
+        bar.Items.Add(_subscriptButton = ToggleFormatButton("x₂", "Подстрочный (Ctrl+=). Обычный текст — Ctrl+Пробел",
+            () => ToggleScript(BaselineAlignment.Subscript), null));
 
         bar.Items.Add(new Separator());
         bar.Items.Add(FormatButton("", "По левому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Left),
@@ -137,6 +152,27 @@ internal sealed class TableEditorWindow : Window
         };
         decorate?.Invoke(button);
         button.Click += (_, _) => action();
+        return button;
+    }
+
+    /// <summary>Кнопка-переключатель: нажата, если формат включён у текста под курсором.</summary>
+    private ToggleButton ToggleFormatButton(string text, string tooltip, Action action, Action<ToggleButton>? decorate)
+    {
+        var button = new ToggleButton
+        {
+            Content = text,
+            ToolTip = tooltip,
+            MinWidth = 28,
+            FontSize = 14,
+            Focusable = false,
+        };
+        decorate?.Invoke(button);
+        button.Click += (_, _) =>
+        {
+            action();
+            // Состояние кнопки — по фактическому формату текста, а не по щелчку.
+            SyncFormatBoxes();
+        };
         return button;
     }
 
@@ -184,7 +220,7 @@ internal sealed class TableEditorWindow : Window
             return;
 
         _activeEditor.Selection.ApplyPropertyValue(TextElement.FontFamilyProperty, RichTextConverter.FontFor(name.Trim()));
-        _activeEditor.Focus();
+        ShowEditor(_activeEditor);
     }
 
     /// <summary>Задаёт высоту основного текста; индексы в выделении остаются уменьшенными.</summary>
@@ -204,7 +240,7 @@ internal sealed class TableEditorWindow : Window
                 run.FontSize = px * Model.Style.ScriptScale;
         }
 
-        _activeEditor.Focus();
+        ShowEditor(_activeEditor);
     }
 
     private void SetHorizontalAlignment(HorizontalTextAlignment alignment)
@@ -217,7 +253,8 @@ internal sealed class TableEditorWindow : Window
         _activeEditor.Document.TextAlignment = wpfAlignment;
         foreach (var block in _activeEditor.Document.Blocks)
             block.TextAlignment = wpfAlignment;
-        _activeEditor.Focus();
+        RefreshPreviews();
+        ShowEditor(_activeEditor);
     }
 
     private void SetVerticalAlignment(VerticalTextAlignment alignment)
@@ -227,7 +264,8 @@ internal sealed class TableEditorWindow : Window
 
         Model.GetCell(_row, _column).VerticalAlignment = alignment;
         _activeEditor.VerticalAlignment = ToWpf(alignment);
-        _activeEditor.Focus();
+        RefreshPreviews();
+        ShowEditor(_activeEditor);
     }
 
     private static System.Windows.TextAlignment ToWpf(HorizontalTextAlignment alignment) => alignment switch
@@ -267,10 +305,51 @@ internal sealed class TableEditorWindow : Window
             _sizeBox.Text = selection.GetPropertyValue(TextElement.FontSizeProperty) is double px
                 ? RichTextConverter.TextHeightMm(px, script, Model.Style, PxPerMm).ToString("0.#", CultureInfo.CurrentCulture)
                 : string.Empty;
+
+            SetChecked(_boldButton, selection.GetPropertyValue(TextElement.FontWeightProperty) is FontWeight weight
+                                    && weight.ToOpenTypeWeight() >= FontWeights.SemiBold.ToOpenTypeWeight());
+            SetChecked(_italicButton, selection.GetPropertyValue(TextElement.FontStyleProperty) is FontStyle fontStyle
+                                      && fontStyle != FontStyles.Normal);
+            SetChecked(_underlineButton, selection.GetPropertyValue(Inline.TextDecorationsProperty) is TextDecorationCollection decorations
+                                         && decorations.Any(d => d.Location == TextDecorationLocation.Underline));
+            SetChecked(_superscriptButton, script == ScriptPosition.Superscript);
+            SetChecked(_subscriptButton, script == ScriptPosition.Subscript);
         }
         finally
         {
             _syncingFormat = false;
+        }
+    }
+
+    private static void SetChecked(ToggleButton? button, bool value)
+    {
+        if (button != null)
+            button.IsChecked = value;
+    }
+
+    /// <summary>Показывает поле ввода ячейки вместо предпросмотра и ставит в него курсор.</summary>
+    private void ShowEditor(RichTextBox editor)
+    {
+        editor.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => editor.Focus()));
+    }
+
+    /// <summary>
+    /// Пересчитывает раскладку таблицы, как для чертежа: высоты строк (с переносом по словам)
+    /// и предпросмотр ячеек.
+    /// </summary>
+    private void RefreshPreviews()
+    {
+        var layout = TableLayout.Build(Model, new FontMetricsMeasurer(Model.Style));
+        for (var r = 0; r < Model.RowCount && r < _grid.RowDefinitions.Count; r++)
+            _grid.RowDefinitions[r].MinHeight = (layout.RowEdges[r + 1] - layout.RowEdges[r]) * PxPerMm;
+
+        foreach (var preview in _previews.Values)
+            preview.Cell = null;
+        foreach (var text in layout.Texts)
+        {
+            if (_previews.TryGetValue((text.Row, text.Column), out var preview))
+                preview.Cell = text;
         }
     }
 
@@ -280,7 +359,7 @@ internal sealed class TableEditorWindow : Window
             return;
 
         command.Execute(null, _activeEditor);
-        _activeEditor.Focus();
+        ShowEditor(_activeEditor);
     }
 
     /// <summary>
@@ -305,7 +384,7 @@ internal sealed class TableEditorWindow : Window
 
         selection.ApplyPropertyValue(Inline.BaselineAlignmentProperty, isOn ? BaselineAlignment.Baseline : target);
         selection.ApplyPropertyValue(TextElement.FontSizeProperty, isOn ? mainSize : mainSize * scale);
-        _activeEditor.Focus();
+        ShowEditor(_activeEditor);
     }
 
     private StackPanel BuildToolPanel()
@@ -432,22 +511,25 @@ internal sealed class TableEditorWindow : Window
         var inner = Math.Max(1, Model.Style.InnerLineMm * PxPerMm);
         RichTextBox? focusTarget = null;
         _activeEditor = null;
+        _previews.Clear();
 
         for (var r = 0; r < Model.RowCount; r++)
         {
             for (var c = 0; c < Model.ColumnCount; c++)
             {
-                var cell = CreateCell(r, c);
+                var preview = new CellPreview(Model.Style, PxPerMm);
+                _previews[(r, c)] = preview;
+                var cell = CreateCell(r, c, preview);
                 var bottom = r == Model.RowCount - 1 || (Model.HasHeader && r == 0) ? outer : inner;
                 var border = new Border
                 {
                     BorderBrush = Brushes.Black,
                     Background = cell.Background,
                     BorderThickness = new Thickness(c == 0 ? outer : 0, r == 0 ? outer : 0, c == Model.ColumnCount - 1 ? outer : inner, bottom),
-                    Child = cell,
+                    Child = new Grid { Children = { preview, cell } },
                 };
-                // Щелчок по пустому месту ячейки (текст выровнен вверх или вниз) ставит курсор в ячейку.
-                border.MouseLeftButtonDown += (_, _) => cell.Focus();
+                // Щелчок по ячейке открывает поле ввода вместо предпросмотра.
+                border.MouseLeftButtonDown += (_, _) => ShowEditor(cell);
                 Grid.SetRow(border, r);
                 Grid.SetColumn(border, c);
                 _grid.Children.Add(border);
@@ -458,11 +540,16 @@ internal sealed class TableEditorWindow : Window
         }
 
         UpdateSizeBoxes();
+        RefreshPreviews();
         if (focusTarget != null)
-            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => focusTarget.Focus()));
+            ShowEditor(focusTarget);
     }
 
-    private RichTextBox CreateCell(int row, int column)
+    /// <summary>
+    /// Поле ввода ячейки. Пока ячейка не редактируется, оно скрыто и вместо него виден предпросмотр
+    /// (как на чертеже): в поле ввода WPF индексы и наклон выглядят иначе, чем в Inventor.
+    /// </summary>
+    private RichTextBox CreateCell(int row, int column, CellPreview preview)
     {
         var style = Model.Style;
         var alignment = ToWpf(Model.GetHorizontalAlignment(row, column));
@@ -474,10 +561,14 @@ internal sealed class TableEditorWindow : Window
             Background = Model.IsHeaderRow(row) ? new SolidColorBrush(Color.FromRgb(0xF3, 0xF6, 0xFA)) : Brushes.White,
             VerticalAlignment = ToWpf(Model.GetVerticalAlignment(row, column)),
             Padding = new Thickness(style.PaddingMm * PxPerMm, 0, style.PaddingMm * PxPerMm, 0),
+            Visibility = Visibility.Collapsed,
         };
 
         box.TextChanged += (_, _) =>
+        {
             Model.SetCell(row, column, RichTextConverter.FromDocument(box.Document, style, PxPerMm, Model.GetCell(row, column)));
+            RefreshPreviews();
+        };
         box.SelectionChanged += (_, _) =>
         {
             if (box == _activeEditor)
@@ -488,21 +579,46 @@ internal sealed class TableEditorWindow : Window
             _row = row;
             _column = column;
             _activeEditor = box;
+            box.Visibility = Visibility.Visible;
+            preview.Visibility = Visibility.Hidden;
             UpdateSizeBoxes();
             SyncFormatBoxes();
         };
-        box.PreviewKeyDown += CellPreviewKeyDown;
+        box.LostKeyboardFocus += (_, _) =>
+        {
+            box.Visibility = Visibility.Collapsed;
+            preview.Visibility = Visibility.Visible;
+        };
+        box.PreviewKeyDown += CellKeyDown;
         return box;
     }
 
-    /// <summary>Горячие клавиши индексов как в Word: Ctrl+= — нижний, Ctrl+Shift+= — верхний.</summary>
-    private void CellPreviewKeyDown(object sender, KeyEventArgs e)
+    /// <summary>
+    /// Горячие клавиши как в Word: Ctrl+= — нижний индекс, Ctrl+Shift+= — верхний,
+    /// Ctrl+Пробел — снова обычный текст (после индекса).
+    /// </summary>
+    private void CellKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.OemPlus || (Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
             return;
 
-        ToggleScript((Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? BaselineAlignment.Superscript : BaselineAlignment.Subscript);
-        e.Handled = true;
+        if (e.Key == Key.OemPlus)
+        {
+            ToggleScript((Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? BaselineAlignment.Superscript : BaselineAlignment.Subscript);
+            SyncFormatBoxes();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Space)
+        {
+            if (_activeEditor?.Selection.GetPropertyValue(Inline.BaselineAlignmentProperty) is BaselineAlignment current
+                && current is BaselineAlignment.Superscript or BaselineAlignment.Subscript)
+            {
+                ToggleScript(current);
+                SyncFormatBoxes();
+            }
+
+            e.Handled = true;
+        }
     }
 
     private void UpdateSizeBoxes()
