@@ -37,16 +37,28 @@ public sealed class TableSession
 
     public TableCell CurrentCell => Model.GetCell(Row, Column);
 
-    /// <summary>Ячейки, к которым относятся выравнивание и формат: выделенные или текущая.</summary>
-    public IEnumerable<(int Row, int Column)> TargetCells => Range?.Cells() ?? new[] { (Row, Column) };
+    /// <summary>
+    /// Ячейки, к которым относятся выравнивание и формат: выделенные или текущая. Объединённая ячейка —
+    /// одна (левая верхняя).
+    /// </summary>
+    public IEnumerable<(int Row, int Column)> TargetCells =>
+        Range?.Cells().Where(c => !Model.IsCovered(c.Row, c.Column)) ?? new[] { (Row, Column) };
+
+    /// <summary>Можно объединить: выделено несколько ячеек.</summary>
+    public bool CanMerge => Range != null;
+
+    /// <summary>Можно разделить: текущая ячейка объединённая.</summary>
+    public bool CanSplit => !Model.GetMerge(Row, Column).IsSingleCell;
 
     // ---------- Текущая ячейка и переходы ----------
 
-    /// <summary>Делает ячейку текущей. Переход в другую ячейку начинает новый шаг отмены.</summary>
+    /// <summary>
+    /// Делает ячейку текущей (у объединённой — её левую верхнюю ячейку). Переход в другую ячейку
+    /// начинает новый шаг отмены.
+    /// </summary>
     public void MoveTo(int row, int column)
     {
-        row = Math.Clamp(row, 0, Model.RowCount - 1);
-        column = Math.Clamp(column, 0, Model.ColumnCount - 1);
+        (row, column) = Model.AnchorOf(Math.Clamp(row, 0, Model.RowCount - 1), Math.Clamp(column, 0, Model.ColumnCount - 1));
         if (row != Row || column != Column)
             _history.BreakMerge();
         Row = row;
@@ -59,8 +71,10 @@ public sealed class TableSession
     /// </summary>
     public (int Row, int Column)? Neighbor(int rowStep, int columnStep)
     {
-        var row = Row + rowStep;
-        var column = Column + columnStep;
+        // Шаг — от края текущей ячейки: у объединённой вправо и вниз — за её правый и нижний край.
+        var merge = Model.GetMerge(Row, Column);
+        var row = rowStep > 0 ? merge.Bottom + 1 : rowStep < 0 ? merge.Top - 1 : merge.Top;
+        var column = columnStep > 0 ? merge.Right + 1 : columnStep < 0 ? merge.Left - 1 : merge.Left;
         if (columnStep != 0)
         {
             if (column >= Model.ColumnCount)
@@ -75,7 +89,7 @@ public sealed class TableSession
             }
         }
 
-        return row < 0 || row >= Model.RowCount || column < 0 || column >= Model.ColumnCount ? null : (row, column);
+        return row < 0 || row >= Model.RowCount || column < 0 || column >= Model.ColumnCount ? null : Model.AnchorOf(row, column);
     }
 
     // ---------- Выделение ячеек ----------
@@ -84,7 +98,7 @@ public sealed class TableSession
     public void BeginSelection(int row, int column)
     {
         ClearSelection();
-        _anchor = (row, column);
+        _anchor = Model.AnchorOf(row, column);
     }
 
     /// <summary>
@@ -96,7 +110,9 @@ public sealed class TableSession
         if (fromCurrent)
             _anchor = (Row, Column);
 
-        CellRange? range = (row, column) == _anchor ? null : CellRange.Between(_anchor, (row, column));
+        // Выделение захватывает объединённые ячейки целиком, как в Excel; внутри одной ячейки — не выделение.
+        var expanded = Model.ExpandToMerges(CellRange.Between(_anchor, (row, column)));
+        CellRange? range = expanded == Model.GetMerge(_anchor.Row, _anchor.Column) ? null : expanded;
         if (range == Range)
             return false;
 
@@ -211,15 +227,43 @@ public sealed class TableSession
             Model.GetCell(row, column).VerticalAlignment = alignment;
     }
 
+    // ---------- Объединение ----------
+
+    /// <summary>Объединяет выделенные ячейки; текущей становится объединённая ячейка. false — нечего объединять.</summary>
+    public bool MergeSelection()
+    {
+        if (Range is not { } range)
+            return false;
+
+        Change(() =>
+        {
+            Model.Merge(range);
+            Row = range.Top;
+            Column = range.Left;
+        });
+        return true;
+    }
+
+    /// <summary>Разделяет текущую объединённую ячейку. false — ячейка не объединённая.</summary>
+    public bool SplitCurrent()
+    {
+        if (!CanSplit)
+            return false;
+
+        Change(() => Model.Split(Row, Column));
+        return true;
+    }
+
     // ---------- Структура ----------
 
     public void InsertColumnLeft() => Change(() => Model.InsertColumn(Column));
 
-    /// <summary>Вставляет столбец справа; текущей становится новая ячейка.</summary>
+    /// <summary>Вставляет столбец справа (у объединённой ячейки — за её правым краем); текущей становится новая ячейка.</summary>
     public void InsertColumnRight() => Change(() =>
     {
-        Model.InsertColumn(Column + 1);
-        Column++;
+        var right = Model.GetMerge(Row, Column).Right + 1;
+        Model.InsertColumn(right);
+        Column = right;
     });
 
     public void DeleteColumn()
@@ -237,11 +281,12 @@ public sealed class TableSession
         Row = index;
     });
 
-    /// <summary>Вставляет строку снизу; текущей становится новая строка.</summary>
+    /// <summary>Вставляет строку снизу (у объединённой ячейки — под её нижним краем); текущей становится новая строка.</summary>
     public void InsertRowBelow() => Change(() =>
     {
-        Model.InsertRow(Row + 1);
-        Row++;
+        var below = Model.GetMerge(Row, Column).Bottom + 1;
+        Model.InsertRow(below);
+        Row = below;
     });
 
     public void DeleteRow()
@@ -297,7 +342,6 @@ public sealed class TableSession
         Record();
         action();
         Range = null;
-        Row = Math.Clamp(Row, 0, Model.RowCount - 1);
-        Column = Math.Clamp(Column, 0, Model.ColumnCount - 1);
+        (Row, Column) = Model.AnchorOf(Math.Clamp(Row, 0, Model.RowCount - 1), Math.Clamp(Column, 0, Model.ColumnCount - 1));
     }
 }

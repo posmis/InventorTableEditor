@@ -1,4 +1,5 @@
 using InventorTableEditor.Core.Editing;
+using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Core.Tests;
 

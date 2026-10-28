@@ -1,4 +1,4 @@
-namespace InventorTableEditor.Core.Editing;
+namespace InventorTableEditor.Core.Model;
 
 /// <summary>Прямоугольник выделенных ячеек, как в Excel: строки Top..Bottom, столбцы Left..Right включительно.</summary>
 public readonly record struct CellRange(int Top, int Left, int Bottom, int Right)

@@ -45,6 +45,8 @@ internal sealed class TableEditorWindow : Window
     private readonly TableSession _session;
     private ITextMetrics _metrics;
 
+    private Button? _mergeButton;
+    private Button? _splitButton;
     private ToggleButton? _boldButton;
     private ToggleButton? _italicButton;
     private ToggleButton? _underlineButton;
@@ -214,7 +216,7 @@ internal sealed class TableEditorWindow : Window
         if (CellAt(point) is not { } cell)
             return;
 
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && cell != (_session.Row, _session.Column))
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && Model.AnchorOf(cell.Row, cell.Column) != (_session.Row, _session.Column))
         {
             _session.ExtendSelection(cell.Row, cell.Column, fromCurrent: true);
             ShowSelection();
@@ -310,6 +312,16 @@ internal sealed class TableEditorWindow : Window
     {
         foreach (var ((row, column), editor) in _editors)
             editor.InRange = _session.Range?.Contains(row, column) ?? false;
+        UpdateCommandStates();
+    }
+
+    /// <summary>Кнопки «Объединить» и «Разделить» активны, только когда действие возможно.</summary>
+    private void UpdateCommandStates()
+    {
+        if (_mergeButton != null)
+            _mergeButton.IsEnabled = _session.CanMerge;
+        if (_splitButton != null)
+            _splitButton.IsEnabled = _session.CanSplit;
     }
 
     /// <summary>Ячейка под точкой сетки (координаты сетки без масштаба); null — вне таблицы.</summary>
@@ -546,6 +558,9 @@ internal sealed class TableEditorWindow : Window
         var panel = new StackPanel { Margin = new Thickness(12, 2, 12, 12) };
 
         panel.Children.Add(new TextBlock { Text = "СТРУКТУРА", Style = ThemeStyle("SectionHeader") });
+        panel.Children.Add(LabeledRow("Ячейки:",
+            _mergeButton = Structure(Icons.Merge(), "Объединить выделенные ячейки\n(выделите ячейки мышью или Shift+щелчком)", () => _session.MergeSelection()),
+            _splitButton = Structure(Icons.Split(), "Разделить объединённую ячейку", () => _session.SplitCurrent())));
         panel.Children.Add(LabeledRow("Столбец:",
             Structure(Icons.Column(0, Icons.Badge.Add), "Вставить столбец слева", _session.InsertColumnLeft),
             Structure(Icons.Column(2, Icons.Badge.Add), "Вставить столбец справа", _session.InsertColumnRight),
@@ -850,28 +865,37 @@ internal sealed class TableEditorWindow : Window
         var outer = Math.Max(1, Model.Style.OuterLineMm * PxPerMm);
         var inner = Math.Max(0.5, Model.Style.InnerLineMm * PxPerMm);
 
+        // Одна ячейка редактора на объединённую ячейку: она растянута на все свои строки и столбцы.
         for (var r = 0; r < Model.RowCount; r++)
         {
             for (var c = 0; c < Model.ColumnCount; c++)
             {
+                if (Model.IsCovered(r, c))
+                    continue;
+
+                var span = Model.GetMerge(r, c);
                 var editor = CreateEditor(r, c);
                 _editors[(r, c)] = editor;
 
-                var bottom = r == Model.RowCount - 1 || (Model.HasHeader && r == 0) ? outer : inner;
+                var bottom = span.Bottom == Model.RowCount - 1 || (Model.HasHeader && span.Bottom == 0) ? outer : inner;
+                var right = span.Right == Model.ColumnCount - 1 ? outer : inner;
                 var border = new Border
                 {
                     BorderBrush = Brushes.Black,
-                    BorderThickness = new Thickness(c == 0 ? outer : 0, r == 0 ? outer : 0, c == Model.ColumnCount - 1 ? outer : inner, bottom),
+                    BorderThickness = new Thickness(c == 0 ? outer : 0, r == 0 ? outer : 0, right, bottom),
                     Child = editor,
                 };
                 Grid.SetRow(border, r);
                 Grid.SetColumn(border, c);
+                Grid.SetRowSpan(border, span.Bottom - span.Top + 1);
+                Grid.SetColumnSpan(border, span.Right - span.Left + 1);
                 _grid.Children.Add(border);
             }
         }
 
         UpdateSizeBoxes();
         RefreshLayout();
+        UpdateCommandStates();
         if (focusEditor)
             FocusActiveEditor();
     }
@@ -896,6 +920,7 @@ internal sealed class TableEditorWindow : Window
             _session.MoveTo(row, column);
             foreach (var other in _editors.Values)
                 other.IsCurrent = ReferenceEquals(other, editor);
+            UpdateCommandStates();
             UpdateSizeBoxes();
             SyncFormatBar();
         };

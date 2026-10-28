@@ -45,23 +45,14 @@ public sealed class TableLayout
     public double Height => RowEdges[^1];
 
     /// <summary>
-    /// Высота строки с учётом содержимого: заданная, но не меньше нужной под текст.
+    /// Высота строки с учётом содержимого: заданная, но не меньше нужной под текст
+    /// (с учётом объединённых ячеек, которые в неё заходят).
     /// </summary>
-    public static double EffectiveRowHeight(TableModel model, int row, ITextMetrics? metrics = null) =>
-        EffectiveRowHeight(model, row, WrapRow(model, row, metrics));
-
-    private static double EffectiveRowHeight(TableModel model, int row, List<List<List<TextRun>>> wrappedRow)
+    public static double EffectiveRowHeight(TableModel model, int row, ITextMetrics? metrics = null)
     {
-        var style = model.Style;
-        var required = wrappedRow.Max(lines => BlockHeight(lines, style)) + 2 * style.PaddingMm;
-        return Math.Max(model.RowHeights[row], required);
+        var edges = Build(model, metrics).RowEdges;
+        return edges[row + 1] - edges[row];
     }
-
-    /// <summary>Строки текста каждой ячейки строки таблицы после переноса по ширине столбца.</summary>
-    private static List<List<List<TextRun>>> WrapRow(TableModel model, int row, ITextMetrics? metrics) =>
-        Enumerable.Range(0, model.ColumnCount)
-            .Select(c => TextWrapper.Wrap(model.Cells[row][c], model.Style, model.ColumnWidths[c] - 2 * model.Style.PaddingMm, metrics))
-            .ToList();
 
     /// <summary>Размер шрифта фрагмента в чертеже, мм (индексы уменьшены).</summary>
     public static double RenderedSize(TextRun run, TableStyle style)
@@ -137,16 +128,84 @@ public sealed class TableLayout
     public static TableLayout Build(TableModel model, ITextMetrics? metrics = null, bool includeEmptyCells = false)
     {
         var style = model.Style;
-        var wrapped = Enumerable.Range(0, model.RowCount).Select(r => WrapRow(model, r, metrics)).ToList();
+        var rows = model.RowCount;
+        var columns = model.ColumnCount;
 
-        var columnEdges = new double[model.ColumnCount + 1];
-        for (var c = 0; c < model.ColumnCount; c++)
+        var columnEdges = new double[columns + 1];
+        for (var c = 0; c < columns; c++)
             columnEdges[c + 1] = columnEdges[c] + model.ColumnWidths[c];
 
-        var rowEdges = new double[model.RowCount + 1];
-        for (var r = 0; r < model.RowCount; r++)
-            rowEdges[r + 1] = rowEdges[r] + EffectiveRowHeight(model, r, wrapped[r]);
+        // Какой ячейке принадлежит каждая клетка сетки: объединённые — левой верхней.
+        var spans = new CellRange[rows, columns];
+        for (var r = 0; r < rows; r++)
+        {
+            for (var c = 0; c < columns; c++)
+                spans[r, c] = new CellRange(r, c, r, c);
+        }
 
+        foreach (var merge in model.Merges())
+        {
+            foreach (var (r, c) in merge.Cells())
+                spans[r, c] = merge;
+        }
+
+        // Перенос текста — по ширине ячейки (у объединённой — по ширине всех её столбцов).
+        var anchors = new List<(CellRange Span, List<List<TextRun>> Lines)>();
+        for (var r = 0; r < rows; r++)
+        {
+            for (var c = 0; c < columns; c++)
+            {
+                var span = spans[r, c];
+                if (span.Top != r || span.Left != c)
+                    continue;
+
+                var width = columnEdges[span.Right + 1] - columnEdges[span.Left];
+                anchors.Add((span, TextWrapper.Wrap(model.Cells[r][c], style, width - 2 * style.PaddingMm, metrics)));
+            }
+        }
+
+        // Высоты строк: заданные, но не меньше нужных под текст. Объединённая по вертикали ячейка,
+        // если ей не хватает места, увеличивает свою нижнюю строку.
+        var heights = model.RowHeights.ToArray();
+        foreach (var (span, lines) in anchors.Where(a => a.Span.Top == a.Span.Bottom))
+            heights[span.Top] = Math.Max(heights[span.Top], BlockHeight(lines, style) + 2 * style.PaddingMm);
+        foreach (var (span, lines) in anchors.Where(a => a.Span.Top != a.Span.Bottom).OrderBy(a => a.Span.Bottom))
+        {
+            var needed = BlockHeight(lines, style) + 2 * style.PaddingMm;
+            var available = Enumerable.Range(span.Top, span.Bottom - span.Top + 1).Sum(r => heights[r]);
+            if (needed > available)
+                heights[span.Bottom] += needed - available;
+        }
+
+        var rowEdges = new double[rows + 1];
+        for (var r = 0; r < rows; r++)
+            rowEdges[r + 1] = rowEdges[r] + heights[r];
+
+        var texts = new List<CellText>();
+        foreach (var (span, lines) in anchors)
+        {
+            var cell = model.Cells[span.Top][span.Left];
+            if (cell.IsEmpty && !includeEmptyCells)
+                continue;
+
+            var top = rowEdges[span.Top];
+            var cellHeight = rowEdges[span.Bottom + 1] - top;
+            var left = columnEdges[span.Left];
+            texts.Add(new CellText(span.Top, span.Left, left, top, columnEdges[span.Right + 1] - left, cellHeight,
+                LayoutLines(lines, style, top, cellHeight, model.GetVerticalAlignment(span.Top, span.Left)),
+                model.GetHorizontalAlignment(span.Top, span.Left)));
+        }
+
+        return new TableLayout(columnEdges, rowEdges, GridLines(model, spans, columnEdges, rowEdges), texts);
+    }
+
+    /// <summary>
+    /// Линии таблицы: рамка — основной линией, разделители — тонкой, линия под строкой заголовков —
+    /// основной. Внутри объединённых ячеек линий нет; соседние отрезки одной линии склеиваются.
+    /// </summary>
+    private static List<LineSegment> GridLines(TableModel model, CellRange[,] spans, double[] columnEdges, double[] rowEdges)
+    {
+        var style = model.Style;
         var width = columnEdges[^1];
         var height = rowEdges[^1];
         var lines = new List<LineSegment>
@@ -158,32 +217,45 @@ public sealed class TableLayout
         };
 
         for (var c = 1; c < model.ColumnCount; c++)
-            lines.Add(new LineSegment(columnEdges[c], 0, columnEdges[c], height, style.InnerLineMm));
+        {
+            var x = columnEdges[c];
+            var pieces = Enumerable.Range(0, model.RowCount)
+                .Where(r => spans[r, c - 1] != spans[r, c])
+                .Select(r => (From: rowEdges[r], To: rowEdges[r + 1]));
+            lines.AddRange(Join(pieces).Select(p => new LineSegment(x, p.From, x, p.To, style.InnerLineMm)));
+        }
 
         for (var r = 1; r < model.RowCount; r++)
         {
-            // Заголовок отделяется основной (толстой) линией.
+            var y = rowEdges[r];
             var weight = model.HasHeader && r == 1 ? style.OuterLineMm : style.InnerLineMm;
-            lines.Add(new LineSegment(0, rowEdges[r], width, rowEdges[r], weight));
+            var pieces = Enumerable.Range(0, model.ColumnCount)
+                .Where(c => spans[r - 1, c] != spans[r, c])
+                .Select(c => (From: columnEdges[c], To: columnEdges[c + 1]));
+            lines.AddRange(Join(pieces).Select(p => new LineSegment(p.From, y, p.To, y, weight)));
         }
 
-        var texts = new List<CellText>();
-        for (var r = 0; r < model.RowCount; r++)
+        return lines;
+    }
+
+    /// <summary>Склеивает отрезки, идущие встык, в один.</summary>
+    private static IEnumerable<(double From, double To)> Join(IEnumerable<(double From, double To)> pieces)
+    {
+        (double From, double To)? current = null;
+        foreach (var piece in pieces)
         {
-            for (var c = 0; c < model.ColumnCount; c++)
+            if (current is { } open && Math.Abs(open.To - piece.From) < 1e-9)
             {
-                var cell = model.Cells[r][c];
-                if (cell.IsEmpty && !includeEmptyCells)
-                    continue;
-
-                var alignment = model.GetHorizontalAlignment(r, c);
-                var top = rowEdges[r];
-                var cellHeight = rowEdges[r + 1] - top;
-                texts.Add(new CellText(r, c, columnEdges[c], top, columnEdges[c + 1] - columnEdges[c], cellHeight,
-                    LayoutLines(wrapped[r][c], style, top, cellHeight, model.GetVerticalAlignment(r, c)), alignment));
+                current = (open.From, piece.To);
+                continue;
             }
+
+            if (current is { } done)
+                yield return done;
+            current = piece;
         }
 
-        return new TableLayout(columnEdges, rowEdges, lines, texts);
+        if (current is { } last)
+            yield return last;
     }
 }

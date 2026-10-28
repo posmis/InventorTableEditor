@@ -17,8 +17,21 @@ public sealed class TableCell
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public VerticalTextAlignment? VerticalAlignment { get; set; }
 
+    /// <summary>У левой верхней ячейки объединения: сколько строк ниже неё входит в объединение.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ExtraRows { get; set; }
+
+    /// <summary>У левой верхней ячейки объединения: сколько столбцов правее неё входит в объединение.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ExtraColumns { get; set; }
+
+    [JsonIgnore]
+    public bool IsMergeAnchor => ExtraRows > 0 || ExtraColumns > 0;
+
+    [JsonIgnore]
     public string PlainText => string.Concat(Runs.Select(r => r.Text));
 
+    [JsonIgnore]
     public bool IsEmpty => string.IsNullOrWhiteSpace(PlainText);
 
     public static TableCell FromText(string? text, bool italic)
@@ -40,6 +53,8 @@ public sealed class TableCell
         Runs = Runs.Select(r => r.Clone()).ToList(),
         HorizontalAlignment = HorizontalAlignment,
         VerticalAlignment = VerticalAlignment,
+        ExtraRows = ExtraRows,
+        ExtraColumns = ExtraColumns,
     };
 
     /// <summary>

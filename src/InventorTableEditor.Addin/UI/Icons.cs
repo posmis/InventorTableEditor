@@ -36,6 +36,40 @@ internal static class Icons
     public static UIElement Row(int row, Badge badge) =>
         Table(new Rect(1.5, 2.5 + row * 3.67, 13, 3.67), badge);
 
+    /// <summary>Объединить ячейки: две ячейки сливаются в одну (синяя), стрелки навстречу друг другу.</summary>
+    public static UIElement Merge()
+    {
+        var drawing = new DrawingGroup();
+        var cell = new Rect(1.5, 3.5, 13, 9);
+        Fill(drawing, AccentFill, cell);
+        Stroke(drawing, Ink, 1, cell);
+        Arrow(drawing, new Point(3, 8), new Point(7, 8));
+        Arrow(drawing, new Point(13, 8), new Point(9, 8));
+        return Image(drawing);
+    }
+
+    /// <summary>Разделить ячейку: пунктирная граница посередине, стрелки в стороны.</summary>
+    public static UIElement Split()
+    {
+        var drawing = new DrawingGroup();
+        var cell = new Rect(1.5, 3.5, 13, 9);
+        Fill(drawing, AccentFill, cell);
+        Stroke(drawing, Ink, 1, cell);
+        drawing.Children.Add(new GeometryDrawing(null, new Pen(Accent, 1) { DashStyle = new DashStyle(new[] { 1.5, 1.5 }, 0) },
+            new LineGeometry(new Point(8, 3.5), new Point(8, 12.5))));
+        Arrow(drawing, new Point(6.5, 8), new Point(3, 8));
+        Arrow(drawing, new Point(9.5, 8), new Point(13, 8));
+        return Image(drawing);
+    }
+
+    private static void Arrow(DrawingGroup drawing, Point from, Point to)
+    {
+        Line(drawing, Accent, 1.2, from, to);
+        var direction = to.X > from.X ? -1 : 1;
+        Line(drawing, Accent, 1.2, to, new Point(to.X + direction * 1.8, to.Y - 1.8));
+        Line(drawing, Accent, 1.2, to, new Point(to.X + direction * 1.8, to.Y + 1.8));
+    }
+
     /// <summary>Выравнивание по горизонтали: четыре строки текста разной длины.</summary>
     public static UIElement Horizontal(HorizontalTextAlignment alignment)
     {
