@@ -10,7 +10,11 @@ public sealed class TableModel
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
-    public const int CurrentVersion = 2;
+    /// <summary>
+    /// Версия формата: 1 — текст ячеек строками; 2 — фрагменты с форматом, перенос по умолчанию включён;
+    /// 3 — перенос по умолчанию выключен (признак Wrap).
+    /// </summary>
+    public const int CurrentVersion = 3;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -222,6 +226,7 @@ public sealed class TableModel
         {
             HorizontalAlignment = anchor.HorizontalAlignment,
             VerticalAlignment = anchor.VerticalAlignment,
+            Wrap = anchor.Wrap,
             ExtraRows = range.Bottom - range.Top,
             ExtraColumns = range.Right - range.Left,
         };
@@ -355,8 +360,18 @@ public sealed class TableModel
         if (model == null)
             throw new InvalidDataException("Пустые данные таблицы.");
 
+        // До версии 3 перенос был включён у всех ячеек, кроме отмеченных «не переносить».
+        var upgradeWrap = model.Version < 3;
         model.Version = CurrentVersion;
         model.Validate();
+        if (upgradeWrap)
+        {
+            foreach (var cell in model.Cells.SelectMany(row => row))
+                cell.Wrap = !cell.LegacyNoWrap;
+        }
+
+        foreach (var cell in model.Cells.SelectMany(row => row))
+            cell.LegacyNoWrap = false;
         return model;
     }
 
@@ -374,6 +389,7 @@ public sealed class TableModel
 
         return new TableModel
         {
+            Version = 1,
             Style = legacy.Style,
             HasHeader = legacy.HasHeader,
             ColumnWidths = legacy.ColumnWidths,

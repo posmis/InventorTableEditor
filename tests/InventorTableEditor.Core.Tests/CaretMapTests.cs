@@ -12,6 +12,7 @@ public class CaretMapTests
         var model = TableModel.CreateEmpty(1, 1);
         model.ColumnWidths[0] = columnWidth;
         model.SetText(0, 0, text);
+        model.GetCell(0, 0).Wrap = true;
         var layout = TableLayout.Build(model, FixedMetrics.Instance, includeEmptyCells: true).Texts.Single();
         return CaretMap.Build(model.GetCell(0, 0), layout, model.Style, FixedMetrics.Instance);
     }

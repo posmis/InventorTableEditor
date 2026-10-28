@@ -12,15 +12,15 @@ public class WrapTextTests
         var model = TableModel.CreateEmpty(1, 1);
         // «aa bb cc» = 40 мм при доступных 18 мм.
         model.SetText(0, 0, "aa bb cc");
-        model.GetCell(0, 0).NoWrap = !wrap;
+        model.GetCell(0, 0).Wrap = wrap;
         return model;
     }
 
     [Fact]
-    public void Default_IsWrapOn()
+    public void Default_IsWrapOff()
     {
-        Assert.False(new TableCell().NoWrap);
-        Assert.True(new TableSession(TableModel.CreateEmpty(1, 1)).WrapText);
+        Assert.False(new TableCell().Wrap);
+        Assert.False(new TableSession(TableModel.CreateEmpty(1, 1)).WrapText);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public class WrapTextTests
     {
         var model = LongText(wrap: false);
         model.SetText(0, 0, "aa\nbb");
-        model.GetCell(0, 0).NoWrap = true;
+        model.GetCell(0, 0).Wrap = false;
 
         Assert.Equal(2, TableLayout.Build(model, FixedMetrics.Instance).Texts.Single().Lines.Count);
     }
@@ -78,29 +78,29 @@ public class WrapTextTests
         session.BeginSelection(0, 0);
         session.ExtendSelection(0, 1);
 
-        session.SetWrapText(false);
+        session.SetWrapText(true);
 
-        Assert.True(session.Model.GetCell(0, 0).NoWrap);
-        Assert.True(session.Model.GetCell(0, 1).NoWrap);
-        Assert.False(session.Model.GetCell(1, 0).NoWrap);
-        Assert.False(session.WrapText);
+        Assert.True(session.Model.GetCell(0, 0).Wrap);
+        Assert.True(session.Model.GetCell(0, 1).Wrap);
+        Assert.False(session.Model.GetCell(1, 0).Wrap);
+        Assert.True(session.WrapText);
 
         session.Undo();
-        Assert.False(session.Model.GetCell(0, 1).NoWrap);
+        Assert.False(session.Model.GetCell(0, 1).Wrap);
     }
 
     [Fact]
-    public void TypingKeepsNoWrap_AndJsonRoundTrip()
+    public void TypingKeepsWrap_AndJsonRoundTrip()
     {
         var session = new TableSession(TableModel.CreateEmpty(1, 1));
-        session.SetWrapText(false);
+        session.SetWrapText(true);
 
         session.ReplaceCell(0, 0, TableCell.FromText("x", italic: false), EditKind.Typing);
         var restored = TableModel.FromJson(session.Model.ToJson());
 
-        Assert.True(session.Model.GetCell(0, 0).NoWrap);
-        Assert.True(restored.GetCell(0, 0).NoWrap);
-        Assert.DoesNotContain("NoWrap", TableModel.CreateEmpty(1, 1).ToJson());
+        Assert.True(session.Model.GetCell(0, 0).Wrap);
+        Assert.True(restored.GetCell(0, 0).Wrap);
+        Assert.DoesNotContain("\"Wrap\"", TableModel.CreateEmpty(1, 1).ToJson());
     }
 
     [Fact]
@@ -118,6 +118,7 @@ public class WrapTextTests
         // «ab c» = 20 мм текста в 18 мм: сжатие 0,9 ≥ 0,75 — не переносится, а сжимается.
         model.SetText(0, 0, "ab c");
         model.GetCell(0, 0).Runs.ForEach(r => r.Italic = false);
+        model.GetCell(0, 0).Wrap = true;
         var layout = TableLayout.Build(model, FixedMetrics.Instance);
         var cell = layout.Texts.Single();
 
@@ -132,6 +133,7 @@ public class WrapTextTests
         var model = TableModel.CreateEmpty(1, 1);
         // 40 мм текста в 18 мм: сжатие 0,45 < 0,75 — переносится.
         model.SetText(0, 0, "aa bb cc");
+        model.GetCell(0, 0).Wrap = true;
         var layout = TableLayout.Build(model, FixedMetrics.Instance);
         var cell = layout.Texts.Single();
 
@@ -149,6 +151,7 @@ public class WrapTextTests
         model.Style.MinScaleBeforeWrap = limit;
         // «ab cd» = 25 мм в 18 мм: без сжатия переносится, с пределом 0,5 (36 мм) — нет.
         model.SetText(0, 0, "ab cd");
+        model.GetCell(0, 0).Wrap = true;
 
         Assert.Equal(expectedLines, TableLayout.Build(model, FixedMetrics.Instance).Texts.Single().Lines.Count);
         Assert.Equal(18 / limit, TableLayout.WrapWidth(20, model.Style), 6);
@@ -171,5 +174,34 @@ public class WrapTextTests
         var json = """{"Style":{"FontSizeMm":5},"ColumnWidths":[20],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""";
 
         Assert.Equal(0.75, TableModel.FromJson(json).Style.MinScaleBeforeWrap);
+    }
+
+    [Fact]
+    public void Version2Tables_KeepWrapOnUnlessMarkedNoWrap()
+    {
+        var json = """{"Version":2,"ColumnWidths":[20,20],"RowHeights":[10],"Cells":[[{"Runs":[]},{"NoWrap":true,"Runs":[]}]]}""";
+
+        var model = TableModel.FromJson(json);
+
+        Assert.True(model.GetCell(0, 0).Wrap);
+        Assert.False(model.GetCell(0, 1).Wrap);
+        Assert.Equal(TableModel.CurrentVersion, model.Version);
+        Assert.DoesNotContain("NoWrap", model.ToJson());
+    }
+
+    [Fact]
+    public void Version1Tables_GetWrapOn()
+    {
+        var json = """{"Version":1,"ColumnWidths":[20],"RowHeights":[8],"Cells":[["a"]]}""";
+
+        Assert.True(TableModel.FromJson(json).GetCell(0, 0).Wrap);
+    }
+
+    [Fact]
+    public void Version3Tables_KeepWrapOff()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+
+        Assert.False(TableModel.FromJson(model.ToJson()).GetCell(0, 0).Wrap);
     }
 }

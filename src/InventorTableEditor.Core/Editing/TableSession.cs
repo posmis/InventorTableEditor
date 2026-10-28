@@ -197,7 +197,7 @@ public sealed class TableSession
         var before = Model.GetCell(row, column);
         cell.HorizontalAlignment = before.HorizontalAlignment;
         cell.VerticalAlignment = before.VerticalAlignment;
-        cell.NoWrap = before.NoWrap;
+        cell.Wrap = before.Wrap;
         cell.Normalize();
         if (before.SameContent(cell))
             return false;
@@ -256,14 +256,14 @@ public sealed class TableSession
     }
 
     /// <summary>Переносится ли текст текущей ячейки по словам (состояние кнопки «Переносить текст»).</summary>
-    public bool WrapText => !CurrentCell.NoWrap;
+    public bool WrapText => CurrentCell.Wrap;
 
     /// <summary>Включает или выключает перенос по словам у выделенных ячеек или у текущей.</summary>
     public void SetWrapText(bool wrap)
     {
         Record();
         foreach (var (row, column) in TargetCells)
-            Model.GetCell(row, column).NoWrap = !wrap;
+            Model.GetCell(row, column).Wrap = wrap;
     }
 
     // ---------- Структура ----------

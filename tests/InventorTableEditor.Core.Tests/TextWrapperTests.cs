@@ -69,6 +69,7 @@ public class TextWrapperTests
     {
         var model = TableModel.CreateEmpty(1, 1);
         model.SetText(0, 0, "aa bb cc");
+        model.GetCell(0, 0).Wrap = true;
 
         // Столбец 20 мм, отступы по 1 мм: 18 мм — 3 символа, три строки.
         var layout = TableLayout.Build(model, FixedMetrics.Instance);

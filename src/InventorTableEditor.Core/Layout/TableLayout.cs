@@ -19,7 +19,7 @@ public sealed record TextLine(IReadOnlyList<TextSegment> Segments, double Baseli
 /// по словам; иначе строки только по Enter, а слишком длинные сжимаются.
 /// </summary>
 public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height,
-    IReadOnlyList<TextLine> Lines, HorizontalTextAlignment Alignment, bool Wrap = true);
+    IReadOnlyList<TextLine> Lines, HorizontalTextAlignment Alignment, bool Wrap = false);
 
 /// <summary>
 /// Геометрия таблицы для вывода в чертёж: границы столбцов и строк, линии и тексты.
@@ -175,7 +175,7 @@ public sealed class TableLayout
 
                 var width = columnEdges[span.Right + 1] - columnEdges[span.Left];
                 var cell = model.Cells[r][c];
-                anchors.Add((span, TextWrapper.Wrap(cell, style, WrapWidth(width, style), cell.NoWrap ? null : metrics)));
+                anchors.Add((span, TextWrapper.Wrap(cell, style, WrapWidth(width, style), cell.Wrap ? metrics : null)));
             }
         }
 
@@ -208,7 +208,7 @@ public sealed class TableLayout
             var left = columnEdges[span.Left];
             texts.Add(new CellText(span.Top, span.Left, left, top, columnEdges[span.Right + 1] - left, cellHeight,
                 LayoutLines(lines, style, top, cellHeight, model.GetVerticalAlignment(span.Top, span.Left)),
-                model.GetHorizontalAlignment(span.Top, span.Left), !cell.NoWrap));
+                model.GetHorizontalAlignment(span.Top, span.Left), cell.Wrap));
         }
 
         return new TableLayout(columnEdges, rowEdges, GridLines(model, spans, columnEdges, rowEdges), texts);

@@ -272,9 +272,11 @@ public class MergeTests
         var model = TableModel.CreateEmpty(1, 2);
         // «aa aa» = 25 мм: в 18 мм не помещается, в 38 мм — помещается.
         model.SetText(0, 0, "aa aa");
+        model.GetCell(0, 0).Wrap = true;
         var narrow = TableLayout.Build(model, FixedMetrics.Instance).Texts.Single(t => t.Column == 0).Lines.Count;
 
         model.Merge(new CellRange(0, 0, 0, 1));
+        Assert.True(model.GetCell(0, 0).Wrap);
         var wide = TableLayout.Build(model, FixedMetrics.Instance).Texts.Single().Lines.Count;
 
         Assert.True(narrow > wide);
