@@ -133,7 +133,8 @@ public sealed class TableLayout
     }
 
     /// <param name="measurer">Измеритель ширины текста для переноса по словам; null — без переноса.</param>
-    public static TableLayout Build(TableModel model, ITextMeasurer? measurer = null)
+    /// <param name="includeEmptyCells">Включать пустые ячейки в <see cref="Texts"/> (редактору нужно место курсора).</param>
+    public static TableLayout Build(TableModel model, ITextMeasurer? measurer = null, bool includeEmptyCells = false)
     {
         var style = model.Style;
         var wrapped = Enumerable.Range(0, model.RowCount).Select(r => WrapRow(model, r, measurer)).ToList();
@@ -172,7 +173,7 @@ public sealed class TableLayout
             for (var c = 0; c < model.ColumnCount; c++)
             {
                 var cell = model.Cells[r][c];
-                if (cell.IsEmpty)
+                if (cell.IsEmpty && !includeEmptyCells)
                     continue;
 
                 var alignment = model.GetHorizontalAlignment(r, c);

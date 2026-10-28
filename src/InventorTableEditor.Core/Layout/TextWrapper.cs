@@ -11,107 +11,112 @@ public interface ITextMeasurer
 
 /// <summary>
 /// Перенос текста ячейки по словам в пределах ширины. Принудительные переносы ('\n') сохраняются.
-/// Слово шире ячейки остаётся на отдельной строке и выходит за её границу.
+/// Слово шире ячейки остаётся на отдельной строке (в чертеже оно сжимается по ширине).
 /// </summary>
 public static class TextWrapper
 {
-    public static List<List<TextRun>> Wrap(TableCell cell, TableStyle style, double availableMm, ITextMeasurer? measurer)
+    /// <summary>
+    /// Строки после переноса как диапазоны символов текста ячейки (<see cref="TableCell.PlainText"/>):
+    /// Start — первый символ, End — за последним; '\n' в диапазон не входит, пробелы в конце строки входят.
+    /// </summary>
+    public static List<(int Start, int End)> WrapRanges(TableCell cell, TableStyle style, double availableMm, ITextMeasurer? measurer)
     {
-        var result = new List<List<TextRun>>();
-        foreach (var line in cell.SplitLines())
+        var chars = Flatten(cell);
+        var result = new List<(int Start, int End)>();
+        var lineStart = 0;
+        for (var i = 0; i <= chars.Count; i++)
         {
+            if (i < chars.Count && chars[i].Ch != '\n')
+                continue;
+
             if (measurer == null || availableMm <= 0)
-                result.Add(line);
+                result.Add((lineStart, i));
             else
-                result.AddRange(WrapLine(line, style, availableMm, measurer));
+                result.AddRange(WrapLine(chars, lineStart, i, style, availableMm, measurer));
+            lineStart = i + 1;
         }
 
         return result;
     }
 
-    private static List<List<TextRun>> WrapLine(List<TextRun> line, TableStyle style, double availableMm, ITextMeasurer measurer)
+    /// <summary>Строки после переноса как фрагменты: без пробелов в конце, соседние фрагменты одного формата склеены.</summary>
+    public static List<List<TextRun>> Wrap(TableCell cell, TableStyle style, double availableMm, ITextMeasurer? measurer)
     {
-        var lines = new List<List<TextRun>>();
-        var current = new List<TextRun>();
+        var chars = Flatten(cell);
+        return WrapRanges(cell, style, availableMm, measurer)
+            .Select(range => ToRuns(chars, range.Start, TrimmedEnd(chars, range.Start, range.End)))
+            .ToList();
+    }
+
+    /// <summary>Конец диапазона без пробелов в конце строки.</summary>
+    public static int TrimmedEnd(TableCell cell, int start, int end) => TrimmedEnd(Flatten(cell), start, end);
+
+    private static IEnumerable<(int Start, int End)> WrapLine(List<(char Ch, TextRun Format)> chars, int start, int end,
+        TableStyle style, double availableMm, ITextMeasurer measurer)
+    {
+        var lineStart = start;
         var width = 0.0;
-        foreach (var word in Words(line))
+        foreach (var (wordStart, wordEnd) in Words(chars, start, end))
         {
             // Пробелы в конце слова не мешают ему поместиться: в конце строки они отбрасываются.
-            var visible = Width(TrimEnd(word), style, measurer);
-            if (current.Count > 0 && width + visible > availableMm + 1e-6)
+            var visible = Width(chars, wordStart, TrimmedEnd(chars, wordStart, wordEnd), style, measurer);
+            if (wordStart > lineStart && width + visible > availableMm + 1e-6)
             {
-                lines.Add(Finish(current));
-                current = new List<TextRun>();
+                yield return (lineStart, wordStart);
+                lineStart = wordStart;
                 width = 0;
             }
 
-            current.AddRange(word);
-            width += Width(word, style, measurer);
+            width += Width(chars, wordStart, wordEnd, style, measurer);
         }
 
-        lines.Add(Finish(current));
-        return lines;
+        yield return (lineStart, end);
     }
 
-    /// <summary>Слова: фрагменты до пробела включительно; слово может состоять из нескольких фрагментов (D и индекс 2).</summary>
-    private static List<List<TextRun>> Words(List<TextRun> line)
+    /// <summary>Слова: символы до пробела включительно; слово может состоять из нескольких фрагментов (D и индекс 2).</summary>
+    private static IEnumerable<(int Start, int End)> Words(List<(char Ch, TextRun Format)> chars, int start, int end)
     {
-        var words = new List<List<TextRun>>();
-        var current = new List<TextRun>();
-        foreach (var run in line)
+        var wordStart = start;
+        for (var i = start; i < end; i++)
         {
-            var start = 0;
-            for (var i = 0; i < run.Text.Length; i++)
-            {
-                var endOfSpaces = run.Text[i] == ' ' && (i + 1 == run.Text.Length || run.Text[i + 1] != ' ');
-                if (!endOfSpaces)
-                    continue;
+            var endOfSpaces = chars[i].Ch == ' ' && (i + 1 == end || chars[i + 1].Ch != ' ');
+            if (!endOfSpaces)
+                continue;
 
-                current.Add(run.WithText(run.Text[start..(i + 1)]));
-                words.Add(current);
-                current = new List<TextRun>();
-                start = i + 1;
-            }
-
-            if (start < run.Text.Length)
-                current.Add(run.WithText(run.Text[start..]));
+            yield return (wordStart, i + 1);
+            wordStart = i + 1;
         }
 
-        if (current.Count > 0)
-            words.Add(current);
-        return words;
+        if (wordStart < end)
+            yield return (wordStart, end);
     }
 
-    private static double Width(List<TextRun> runs, TableStyle style, ITextMeasurer measurer) =>
-        runs.Sum(r => measurer.AdvanceWidthMm(r, r.Text, TableLayout.RenderedSize(r, style)));
+    private static double Width(List<(char Ch, TextRun Format)> chars, int start, int end, TableStyle style, ITextMeasurer measurer) =>
+        ToRuns(chars, start, end).Sum(r => measurer.AdvanceWidthMm(r, r.Text, TableLayout.RenderedSize(r, style)));
 
-    /// <summary>Строка без пробелов в конце и с соседними фрагментами одного формата, склеенными обратно.</summary>
-    private static List<TextRun> Finish(List<TextRun> runs)
+    private static int TrimmedEnd(List<(char Ch, TextRun Format)> chars, int start, int end)
     {
-        var merged = new List<TextRun>();
-        foreach (var run in TrimEnd(runs))
+        while (end > start && chars[end - 1].Ch == ' ')
+            end--;
+        return end;
+    }
+
+    /// <summary>Фрагменты для символов [start, end): соседние символы одного формата — один фрагмент.</summary>
+    private static List<TextRun> ToRuns(List<(char Ch, TextRun Format)> chars, int start, int end)
+    {
+        var runs = new List<TextRun>();
+        for (var i = start; i < end; i++)
         {
-            if (merged.Count > 0 && merged[^1].SameFormat(run))
-                merged[^1] = merged[^1].WithText(merged[^1].Text + run.Text);
+            var (ch, format) = chars[i];
+            if (runs.Count > 0 && runs[^1].SameFormat(format))
+                runs[^1].Text += ch;
             else
-                merged.Add(run);
+                runs.Add(format.WithText(ch.ToString()));
         }
 
-        return merged;
+        return runs;
     }
 
-    private static List<TextRun> TrimEnd(List<TextRun> runs)
-    {
-        var result = runs.Select(r => r.Clone()).ToList();
-        while (result.Count > 0)
-        {
-            var last = result[^1];
-            last.Text = last.Text.TrimEnd(' ');
-            if (last.Text.Length > 0)
-                break;
-            result.RemoveAt(result.Count - 1);
-        }
-
-        return result;
-    }
+    private static List<(char Ch, TextRun Format)> Flatten(TableCell cell) =>
+        cell.Runs.SelectMany(run => run.Text.Select(ch => (ch, run))).ToList();
 }

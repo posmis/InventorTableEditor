@@ -82,4 +82,22 @@ public class TextWrapperTests
         Assert.Equal(3, layout.Texts.Single().Lines.Count);
         Assert.Equal(2 + 5 + 2 * 5 * 1.6, layout.Height, 6);
     }
+
+    [Fact]
+    public void WrapRanges_CoverTextWithTrailingSpacesAndSkipLineBreaks()
+    {
+        var cell = TableCell.FromText("aa bb cc\nd", italic: false);
+
+        var ranges = TextWrapper.WrapRanges(cell, Style, 30, new FixedMeasurer());
+
+        // "aa bb " (0..6), "cc" (6..8), '\n' на 8, "d" (9..10).
+        Assert.Equal(new[] { (0, 6), (6, 8), (9, 10) }, ranges);
+        Assert.Equal(5, TextWrapper.TrimmedEnd(cell, 0, 6));
+    }
+
+    [Fact]
+    public void WrapRanges_EmptyCellHasOneEmptyLine()
+    {
+        Assert.Equal(new[] { (0, 0) }, TextWrapper.WrapRanges(new TableCell(), Style, 30, new FixedMeasurer()));
+    }
 }

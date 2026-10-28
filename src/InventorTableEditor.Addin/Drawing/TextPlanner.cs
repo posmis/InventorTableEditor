@@ -8,11 +8,14 @@ namespace InventorTableEditor.Addin.Drawing;
 /// <summary>Фрагмент строки (мм, до сжатия по ширине): положение пера, левый край надписи от начала строки, верх букв от верха таблицы.</summary>
 internal sealed record PlannedRun(TextRun Run, double SizeMm, double PenMm, double BoxLeftMm, double BaselineMm, double TopMm);
 
+/// <summary>Положение пера в начале фрагмента строки (включая фрагменты из одних пробелов), мм до сжатия.</summary>
+internal sealed record PenPosition(TextRun Run, double SizeMm, double PenMm);
+
 /// <summary>
-/// Расстановка строки: фрагменты, коэффициент сжатия по ширине и положение начала строки
-/// (пера 0) в координатах таблицы с учётом выравнивания ячейки, мм.
+/// Расстановка строки: видимые фрагменты, перья всех фрагментов (для курсора), коэффициент сжатия
+/// по ширине и положение начала строки (пера 0) в координатах таблицы с учётом выравнивания ячейки, мм.
 /// </summary>
-internal sealed record LinePlan(List<PlannedRun> Runs, double WidthScale, double OriginMm);
+internal sealed record LinePlan(List<PlannedRun> Runs, List<PenPosition> Pens, double WidthScale, double OriginMm);
 
 /// <summary>
 /// Расстановка фрагментов строки по метрикам шрифта — общая для чертежа и предпросмотра в редакторе.
@@ -25,6 +28,7 @@ internal static class TextPlanner
     public static LinePlan PlanLine(TextLine line, TableStyle style, CellText cell)
     {
         var runs = new List<PlannedRun>();
+        var pens = new List<PenPosition>();
         double pen = 0, left = double.PositiveInfinity, right = double.NegativeInfinity;
         TextRun? previous = null;
         var previousOverhang = 0.0;
@@ -40,6 +44,7 @@ internal static class TextPlanner
 
                 previous = run;
                 previousOverhang = extents.OverhangMm;
+                pens.Add(new PenPosition(run, size, pen));
                 if (!string.IsNullOrWhiteSpace(run.Text))
                 {
                     runs.Add(new PlannedRun(run, size, pen, pen + extents.BoxLeftMm, segment.BaselineMm, segment.BaselineMm - extents.TopMm));
@@ -52,7 +57,16 @@ internal static class TextPlanner
         }
 
         if (runs.Count == 0)
-            return new LinePlan(runs, 1, cell.Left);
+        {
+            // Пустая строка (или одни пробелы): начало — по выравниванию ячейки.
+            var start = cell.Alignment switch
+            {
+                HorizontalTextAlignment.Center => cell.Left + cell.Width / 2,
+                HorizontalTextAlignment.Right => cell.Left + cell.Width - style.PaddingMm,
+                _ => cell.Left + style.PaddingMm,
+            };
+            return new LinePlan(runs, pens, 1, start);
+        }
 
         var available = cell.Width - 2 * style.PaddingMm;
         var width = right - left;
@@ -68,14 +82,19 @@ internal static class TextPlanner
             _ => cell.Left + style.PaddingMm,
         };
 
-        return new LinePlan(runs, scale, lineLeft - left * scale);
+        return new LinePlan(runs, pens, scale, lineLeft - left * scale);
     }
 
+    /// <summary>Ширина текста в формате фрагмента по ширинам букв, мм (без сжатия).</summary>
+    public static double AdvanceMm(TextRun format, string text, TableStyle style) =>
+        Measure(format, TableLayout.RenderedSize(format, style), style, text).AdvanceMm;
+
     /// <summary>Размеры фрагмента по метрикам шрифта; если шрифт не найден в Windows — грубая оценка.</summary>
-    private static TextExtents Measure(TextRun run, double size, TableStyle style)
+    private static TextExtents Measure(TextRun run, double size, TableStyle style, string? text = null)
     {
+        text ??= run.Text;
         var metrics = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic);
-        return metrics?.Measure(run.Text, size, run.Italic) ?? new TextExtents(size, 0, run.Text.Length * size * 0.6, 0);
+        return metrics?.Measure(text, size, run.Italic) ?? new TextExtents(size, 0, text.Length * size * 0.6, 0);
     }
 
     /// <summary>

@@ -149,4 +149,17 @@ public class TableLayoutTests
         Assert.Equal(6.5, line.Segments[1].FontSizeMm, 6);
         Assert.Equal(line.BaselineMm - 5, line.Segments[1].BaselineMm, 6);
     }
+
+    [Fact]
+    public void Build_IncludesEmptyCellsForEditor()
+    {
+        var model = TableModel.CreateEmpty(1, 2);
+        model.SetText(0, 0, "A");
+
+        var layout = TableLayout.Build(model, includeEmptyCells: true);
+
+        var empty = layout.Texts.Single(t => t.Column == 1);
+        Assert.Empty(empty.Lines.Single().Segments);
+        Assert.Equal(6.5, empty.Lines.Single().BaselineMm, 6);
+    }
 }
