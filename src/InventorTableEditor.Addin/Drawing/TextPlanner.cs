@@ -33,14 +33,51 @@ internal static class TextPlanner
         TextRun? previous = null;
         var previousOverhang = 0.0;
 
+        // Индексы после основного текста: где началась группа индексов (конец основного текста
+        // без поправки на наклон), выступ последней буквы основного текста, правый край группы
+        // и стоит ли уже второй индекс под первым.
+        double stackStart = 0, baseOverhang = 0, stackEnd = 0;
+        var baseItalic = false;
+        var stacked = false;
+
         foreach (var segment in line.Segments)
         {
             foreach (var run in segment.Runs)
             {
                 var size = TableLayout.RenderedSize(run, style);
                 var extents = Measure(run, size, style);
-                if (previous != null && NeedsItalicCorrection(previous, run))
-                    pen += previousOverhang;
+                var startsStack = run.Script != ScriptPosition.Normal && (previous == null || previous.Script == ScriptPosition.Normal);
+                var secondIndex = previous != null && !stacked
+                                  && previous.Script != ScriptPosition.Normal && run.Script != ScriptPosition.Normal
+                                  && run.Script != previous.Script;
+
+                if (startsStack)
+                {
+                    stackStart = pen;
+                    stackEnd = pen;
+                    stacked = false;
+                }
+
+                if (secondIndex)
+                {
+                    // Верхний и нижний индексы друг под другом: второй начинается там же, где первый.
+                    // Верхний у наклонной буквы сдвинут на её выступ, нижний — нет (как в TeX).
+                    stacked = true;
+                    pen = stackStart + (run.Script == ScriptPosition.Superscript && baseItalic ? baseOverhang : 0);
+                }
+                else
+                {
+                    if (previous != null && previous.Script != ScriptPosition.Normal && run.Script == ScriptPosition.Normal)
+                        pen = Math.Max(pen, stackEnd);
+                    if (previous != null && NeedsItalicCorrection(previous, run))
+                        pen += previousOverhang;
+                }
+
+                if (run.Script == ScriptPosition.Normal)
+                {
+                    baseItalic = run.Italic;
+                    baseOverhang = extents.OverhangMm;
+                }
 
                 previous = run;
                 previousOverhang = extents.OverhangMm;
@@ -53,6 +90,8 @@ internal static class TextPlanner
                 }
 
                 pen += extents.AdvanceMm;
+                if (run.Script != ScriptPosition.Normal)
+                    stackEnd = Math.Max(stackEnd, pen);
             }
         }
 
