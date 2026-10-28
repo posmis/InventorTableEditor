@@ -199,6 +199,21 @@ public sealed class CellTextBuffer
         Apply(f => f.FontSizeMm = value);
     }
 
+    /// <summary>
+    /// Выполняется ли условие для всех символов выделения (без выделения — для набираемого текста).
+    /// Для нескольких выделенных ячеек: включить формат, если он есть не у всего текста.
+    /// </summary>
+    public bool All(Func<TextRun, bool> predicate) =>
+        HasSelection
+            ? Enumerable.Range(SelectionStart, SelectionEnd - SelectionStart).All(i => predicate(_formats[i]))
+            : predicate(TypingFormat);
+
+    /// <summary>Меняет формат выделенных символов (без выделения — формат набираемого текста).</summary>
+    public void ApplyFormat(Action<TextRun> change) => Apply(change);
+
+    /// <summary>Есть ли в ячейке видимый текст (не только пробелы и переносы).</summary>
+    public bool HasText => _chars.Any(ch => !char.IsWhiteSpace(ch));
+
     public bool Undo() => Restore(_undo, _redo);
 
     public bool Redo() => Restore(_redo, _undo);
@@ -217,9 +232,7 @@ public sealed class CellTextBuffer
 
     private void Toggle(Func<TextRun, bool> isOn, Action<TextRun, bool> set)
     {
-        var allOn = HasSelection
-            ? Enumerable.Range(SelectionStart, SelectionEnd - SelectionStart).All(i => isOn(_formats[i]))
-            : isOn(TypingFormat);
+        var allOn = All(isOn);
         Apply(f => set(f, !allOn));
     }
 

@@ -260,4 +260,40 @@ public class CellTextBufferTests
         Assert.False(buffer.Redo());
         Assert.Equal("ac", buffer.Text);
     }
+
+    [Fact]
+    public void All_ChecksSelectionOrTypingFormat()
+    {
+        var buffer = Buffer("ab");
+        buffer.MoveTo(0, extend: false);
+        buffer.MoveTo(1, extend: true);
+        buffer.ToggleBold();
+
+        buffer.SelectAll();
+        Assert.False(buffer.All(f => f.Bold));
+
+        buffer.MoveTo(1, extend: false);
+        Assert.True(buffer.All(f => f.Bold));
+    }
+
+    [Fact]
+    public void ApplyFormat_SetsValueOnWholeSelection()
+    {
+        var buffer = Buffer("abc");
+        buffer.SelectAll();
+
+        buffer.ApplyFormat(f => f.Underline = true);
+
+        Assert.True(buffer.ToCell(new TableCell()).Runs.Single().Underline);
+        Assert.True(buffer.Undo());
+        Assert.False(buffer.ToCell(new TableCell()).Runs.Single().Underline);
+    }
+
+    [Fact]
+    public void HasText_IgnoresWhitespace()
+    {
+        Assert.False(Buffer(" \n ").HasText);
+        Assert.True(Buffer(" a").HasText);
+        Assert.False(new CellTextBuffer(new TableCell(), Style).HasText);
+    }
 }

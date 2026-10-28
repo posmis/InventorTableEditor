@@ -25,6 +25,9 @@ internal sealed class CellEditor : FrameworkElement
     private readonly Brush _background;
     private readonly Pen _focusPen;
     private readonly DispatcherTimer _blink = new() { Interval = TimeSpan.FromMilliseconds(530) };
+    /// <summary>Подсветка выделенных ячеек — полупрозрачный голубой поверх текста, как в Excel.</summary>
+    private static readonly Brush RangeBrush = CreateRangeBrush();
+
     /// <summary>Толщина обводки жирного текста в долях кегля.</summary>
     private const double BoldStroke = 0.035;
 
@@ -32,6 +35,7 @@ internal sealed class CellEditor : FrameworkElement
     private CellText? _layout;
     private CaretMap? _caretMap;
     private bool _caretVisible;
+    private bool _inRange;
     private bool _selecting;
 
     public CellEditor(TableCell cell, TableStyle style, double pxPerMm, Brush background, Brush accent)
@@ -75,6 +79,41 @@ internal sealed class CellEditor : FrameworkElement
             _caretMap = value == null ? null : CaretMap.Build(Buffer.ToCell(new TableCell()), value, _style, _metrics);
             InvalidateVisual();
         }
+    }
+
+    /// <summary>Ячейка входит в выделенный прямоугольник ячеек (подсвечивается голубым).</summary>
+    public bool InRange
+    {
+        get => _inRange;
+        set
+        {
+            if (_inRange == value)
+                return;
+            _inRange = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>Применяет действие ко всему тексту ячейки (для выделенных ячеек); курсор остаётся на месте.</summary>
+    public void EditAll(Action<CellTextBuffer> action) => Edit(buffer =>
+    {
+        var caret = buffer.Caret;
+        buffer.SelectAll();
+        action(buffer);
+        buffer.MoveTo(caret, extend: false);
+    });
+
+    /// <summary>Есть ли у всего текста ячейки формат (пустая ячейка не учитывается: null).</summary>
+    public bool? AllText(Func<TextRun, bool> predicate)
+    {
+        if (!Buffer.HasText)
+            return null;
+
+        var caret = Buffer.Caret;
+        Buffer.SelectAll();
+        var all = Buffer.All(predicate);
+        Buffer.MoveTo(caret, extend: false);
+        return all;
     }
 
     /// <summary>Ставит курсор в конец текста (при переходе в ячейку с клавиатуры).</summary>
@@ -323,6 +362,9 @@ internal sealed class CellEditor : FrameworkElement
                 DrawCaret(context);
         }
 
+        if (_inRange)
+            context.DrawRectangle(RangeBrush, null, new Rect(RenderSize));
+
         // Текущая ячейка — синей рамкой, как в Excel.
         if (IsKeyboardFocused && RenderSize.Width > 2 && RenderSize.Height > 2)
             context.DrawRectangle(null, _focusPen, new Rect(1, 1, RenderSize.Width - 2, RenderSize.Height - 2));
@@ -428,6 +470,13 @@ internal sealed class CellEditor : FrameworkElement
         _caretMap == null || _layout == null
             ? Buffer.Caret
             : _caretMap.HitTest(point.X / _pxPerMm + _layout.Left, point.Y / _pxPerMm + _layout.Top);
+
+    private static Brush CreateRangeBrush()
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(0x40, 0x06, 0x96, 0xD7));
+        brush.Freeze();
+        return brush;
+    }
 
     private static bool SameRuns(TableCell a, TableCell b) =>
         a.Runs.Count == b.Runs.Count && a.Runs.Zip(b.Runs).All(p => p.First.Text == p.Second.Text && p.First.SameFormat(p.Second));

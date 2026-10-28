@@ -56,6 +56,11 @@ internal sealed class TableEditorWindow : Window
     private int _row;
     private int _column;
 
+    /// <summary>Выделение ячеек как в Excel: от начальной ячейки до текущей; null — одна ячейка.</summary>
+    private CellRange? _range;
+    private (int Row, int Column) _rangeAnchor;
+    private bool _draggingRange;
+
     /// <summary>Списки шрифта и размера обновляются из формата под курсором — в это время их события игнорируются.</summary>
     private bool _syncingFormat;
 
@@ -138,16 +143,144 @@ internal sealed class TableEditorWindow : Window
         };
         root.Children.Add(scroll);
 
-        PreviewKeyDown += (_, e) =>
-        {
-            if (e.Key == Key.D0 && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
-            {
-                SetZoom(1);
-                e.Handled = true;
-            }
-        };
+        PreviewKeyDown += OnWindowPreviewKeyDown;
+        PreviewTextInput += (_, _) => ClearRange();
+        _grid.PreviewMouseLeftButtonDown += OnGridMouseDown;
+        _grid.PreviewMouseMove += OnGridMouseMove;
+        _grid.PreviewMouseLeftButtonUp += (_, _) => _draggingRange = false;
 
         return root;
+    }
+
+    // ---------- Выделение ячеек ----------
+
+    /// <summary>Щелчок по ячейке начинает выделение; Shift+щелчок — прямоугольник от текущей ячейки, как в Excel.</summary>
+    private void OnGridMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (CellAt(e.GetPosition(_grid)) is not { } cell)
+            return;
+
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && cell != (_row, _column))
+        {
+            _rangeAnchor = (_row, _column);
+            SetRange(cell);
+            // Курсор остаётся в начальной ячейке, текст в ячейке под мышью не выделяется.
+            e.Handled = true;
+            return;
+        }
+
+        ClearRange();
+        _rangeAnchor = cell;
+        _draggingRange = true;
+    }
+
+    /// <summary>Протягивание мышью за пределы начальной ячейки выделяет прямоугольник ячеек.</summary>
+    private void OnGridMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_draggingRange || e.LeftButton != MouseButtonState.Pressed || CellAt(e.GetPosition(_grid)) is not { } cell)
+            return;
+
+        if (cell == _rangeAnchor)
+            ClearRange();
+        else
+            SetRange(cell);
+    }
+
+    private void SetRange((int Row, int Column) to)
+    {
+        var range = CellRange.Between(_rangeAnchor, to);
+        if (_range == range)
+            return;
+
+        _range = range;
+        foreach (var ((row, column), editor) in _editors)
+            editor.InRange = range.Contains(row, column);
+    }
+
+    private void ClearRange()
+    {
+        if (_range == null)
+            return;
+
+        _range = null;
+        foreach (var editor in _editors.Values)
+            editor.InRange = false;
+    }
+
+    /// <summary>Ячейка под точкой сетки (координаты сетки без масштаба); null — вне таблицы.</summary>
+    private (int Row, int Column)? CellAt(Point point)
+    {
+        int Index(double position, IReadOnlyList<double> sizes)
+        {
+            var edge = 0.0;
+            for (var i = 0; i < sizes.Count; i++)
+            {
+                edge += sizes[i];
+                if (position < edge)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        var column = Index(point.X, _grid.ColumnDefinitions.Select(c => c.ActualWidth).ToList());
+        var row = Index(point.Y, _grid.RowDefinitions.Select(r => r.ActualHeight).ToList());
+        return row < 0 || column < 0 || point.X < 0 || point.Y < 0 ? null : (row, column);
+    }
+
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        if (e.Key == Key.D0 && ctrl)
+        {
+            SetZoom(1);
+            e.Handled = true;
+            return;
+        }
+
+        if (_range is not { } range)
+            return;
+
+        switch (e.Key)
+        {
+            case Key.Delete:
+                // Delete очищает все выделенные ячейки, как в Excel.
+                foreach (var editor in EditorsIn(range))
+                    editor.EditAll(b => b.DeleteSelection());
+                e.Handled = true;
+                break;
+            case Key.B when ctrl:
+                ToggleFormat(f => f.Bold, (f, on) => f.Bold = on);
+                e.Handled = true;
+                break;
+            case Key.I when ctrl:
+                ToggleFormat(f => f.Italic, (f, on) => f.Italic = on);
+                e.Handled = true;
+                break;
+            case Key.U when ctrl:
+                ToggleFormat(f => f.Underline, (f, on) => f.Underline = on);
+                e.Handled = true;
+                break;
+            case Key.OemPlus when ctrl:
+                var script = (Keyboard.Modifiers & ModifierKeys.Shift) != 0 ? ScriptPosition.Superscript : ScriptPosition.Subscript;
+                ToggleFormat(f => f.Script == script, (f, on) => f.Script = on ? script : ScriptPosition.Normal);
+                e.Handled = true;
+                break;
+            case Key.Space when ctrl:
+                EditSelection(b => b.ResetScript());
+                e.Handled = true;
+                break;
+            case Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl:
+                break;
+            default:
+                // Любая другая клавиша (стрелки, ввод) — снова работа с одной ячейкой.
+                if (!ctrl)
+                    ClearRange();
+                break;
+        }
+
+        if (e.Handled)
+            SyncFormatBar();
     }
 
     // ---------- Лента ----------
@@ -159,14 +292,17 @@ internal sealed class TableEditorWindow : Window
 
         var font = Row(_fontBox, _sizeBox);
         var style = Row(
-            _boldButton = Toggle(Icons.Letter("Ж", FontWeights.Bold, FontStyles.Normal, false), "Жирный (Ctrl+B)", b => b.ToggleBold()),
-            _italicButton = Toggle(Icons.Letter("К", FontWeights.Normal, FontStyles.Italic, false), "Наклонный (Ctrl+I)", b => b.ToggleItalic()),
-            _underlineButton = Toggle(Icons.Letter("Ч", FontWeights.Normal, FontStyles.Normal, true), "Подчёркнутый (Ctrl+U)", b => b.ToggleUnderline()),
+            _boldButton = Toggle(Icons.Letter("Ж", FontWeights.Bold, FontStyles.Normal, false), "Жирный (Ctrl+B)",
+                f => f.Bold, (f, on) => f.Bold = on),
+            _italicButton = Toggle(Icons.Letter("К", FontWeights.Normal, FontStyles.Italic, false), "Наклонный (Ctrl+I)",
+                f => f.Italic, (f, on) => f.Italic = on),
+            _underlineButton = Toggle(Icons.Letter("Ч", FontWeights.Normal, FontStyles.Normal, true), "Подчёркнутый (Ctrl+U)",
+                f => f.Underline, (f, on) => f.Underline = on),
             Gap(),
             _superscriptButton = Toggle(Icons.Script(ScriptPosition.Superscript), "Верхний индекс (Ctrl+Shift+=)\nОбычный текст — Ctrl+Пробел",
-                b => b.ToggleScript(ScriptPosition.Superscript)),
+                f => f.Script == ScriptPosition.Superscript, (f, on) => f.Script = on ? ScriptPosition.Superscript : ScriptPosition.Normal),
             _subscriptButton = Toggle(Icons.Script(ScriptPosition.Subscript), "Нижний индекс (Ctrl+=)\nОбычный текст — Ctrl+Пробел",
-                b => b.ToggleScript(ScriptPosition.Subscript)));
+                f => f.Script == ScriptPosition.Subscript, (f, on) => f.Script = on ? ScriptPosition.Subscript : ScriptPosition.Normal));
         var alignment = Row(
             Flat(Icons.Horizontal(HorizontalTextAlignment.Left), "По левому краю", () => SetHorizontalAlignment(HorizontalTextAlignment.Left)),
             Flat(Icons.Horizontal(HorizontalTextAlignment.Center), "По центру", () => SetHorizontalAlignment(HorizontalTextAlignment.Center)),
@@ -210,17 +346,64 @@ internal sealed class TableEditorWindow : Window
     private static FrameworkElement Gap() => new Border { Width = 6 };
 
     /// <summary>Переключатель формата: нажат, если формат включён у текста под курсором.</summary>
-    private ToggleButton Toggle(UIElement icon, string tooltip, Action<CellTextBuffer> action)
+    private ToggleButton Toggle(UIElement icon, string tooltip, Func<TextRun, bool> isOn, Action<TextRun, bool> set)
     {
         var button = new ToggleButton { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatToggle") };
         button.Click += (_, _) =>
         {
-            ActiveEditor?.Edit(action);
+            ToggleFormat(isOn, set);
             // Состояние кнопки — по фактическому формату текста, а не по щелчку.
             SyncFormatBar();
         };
         return button;
     }
+
+    /// <summary>
+    /// Включает или выключает формат. Для нескольких выделенных ячеек — как в Excel: если формат есть
+    /// у всего их текста, он снимается, иначе включается у всего. Для одной ячейки — у выделенного текста
+    /// или у набираемого.
+    /// </summary>
+    private void ToggleFormat(Func<TextRun, bool> isOn, Action<TextRun, bool> set)
+    {
+        if (_range is { } range)
+        {
+            var editors = EditorsIn(range).ToList();
+            var allOn = editors.Select(e => e.AllText(isOn)).Where(v => v != null).All(v => v == true);
+            foreach (var editor in editors)
+                editor.EditAll(b => b.ApplyFormat(f => set(f, !allOn)));
+        }
+        else
+        {
+            ActiveEditor?.Edit(b =>
+            {
+                var on = b.All(isOn);
+                b.ApplyFormat(f => set(f, !on));
+            });
+        }
+
+        FocusActiveEditor();
+    }
+
+    /// <summary>Действие с форматом — над всеми выделенными ячейками целиком или над текущей ячейкой.</summary>
+    private void EditSelection(Action<CellTextBuffer> action)
+    {
+        if (_range is { } range)
+        {
+            foreach (var editor in EditorsIn(range))
+                editor.EditAll(action);
+        }
+        else
+        {
+            ActiveEditor?.Edit(action);
+        }
+    }
+
+    private IEnumerable<CellEditor> EditorsIn(CellRange range) =>
+        range.Cells().Select(cell => _editors.TryGetValue(cell, out var editor) ? editor : null).OfType<CellEditor>();
+
+    /// <summary>Ячейки, к которым относятся выравнивание и формат: выделенные или текущая.</summary>
+    private IEnumerable<(int Row, int Column)> TargetCells() =>
+        _range?.Cells() ?? new[] { (_row, _column) };
 
     private Button Flat(UIElement icon, string tooltip, Action action)
     {
@@ -331,7 +514,7 @@ internal sealed class TableEditorWindow : Window
 
         var hint = new TextBlock
         {
-            Text = "Ctrl+колесо — масштаб · Tab — следующая ячейка · Enter — новая строка в ячейке",
+            Text = "Протяните мышью или Shift+щелчок — несколько ячеек · Ctrl+колесо — масштаб · Tab — следующая ячейка",
             Foreground = ThemeBrush("MutedTextBrush"),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -410,7 +593,7 @@ internal sealed class TableEditorWindow : Window
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        ActiveEditor?.Edit(b => b.SetFontName(name.Trim()));
+        EditSelection(b => b.SetFontName(name.Trim()));
         FocusActiveEditor();
     }
 
@@ -419,20 +602,22 @@ internal sealed class TableEditorWindow : Window
         if (!TryParseMm(text, 0.5, 100, out var sizeMm))
             return;
 
-        ActiveEditor?.Edit(b => b.SetFontSize(sizeMm));
+        EditSelection(b => b.SetFontSize(sizeMm));
         FocusActiveEditor();
     }
 
     private void SetHorizontalAlignment(HorizontalTextAlignment alignment)
     {
-        Model.GetCell(_row, _column).HorizontalAlignment = alignment;
+        foreach (var (row, column) in TargetCells())
+            Model.GetCell(row, column).HorizontalAlignment = alignment;
         RefreshLayout();
         FocusActiveEditor();
     }
 
     private void SetVerticalAlignment(VerticalTextAlignment alignment)
     {
-        Model.GetCell(_row, _column).VerticalAlignment = alignment;
+        foreach (var (row, column) in TargetCells())
+            Model.GetCell(row, column).VerticalAlignment = alignment;
         RefreshLayout();
         FocusActiveEditor();
     }
@@ -524,6 +709,7 @@ internal sealed class TableEditorWindow : Window
         _column = Math.Clamp(_column, 0, Model.ColumnCount - 1);
         _headerBox.IsChecked = Model.HasHeader;
 
+        _range = null;
         _grid.Children.Clear();
         _grid.ColumnDefinitions.Clear();
         _grid.RowDefinitions.Clear();
