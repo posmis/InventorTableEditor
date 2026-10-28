@@ -111,7 +111,7 @@ internal sealed class TablePlacement
         try
         {
             var definition = _document.SketchedSymbolDefinitions.Add(UniqueName());
-            TableRenderer.Draw(definition, _model, _inventor.TransientGeometry);
+            TableRenderer.Draw(_document, definition, _model, _inventor.TransientGeometry);
             TableStorage.Write(definition, _model);
             _document.ActiveSheet.SketchedSymbols.Add(definition, position, 0, 1, Type.Missing);
             transaction.End();

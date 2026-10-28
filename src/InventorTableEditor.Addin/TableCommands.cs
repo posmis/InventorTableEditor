@@ -97,7 +97,7 @@ internal sealed class TableCommands
         var transaction = _inventor.TransactionManager.StartTransaction((_Document)document, "Редактирование таблицы");
         try
         {
-            TableRenderer.Draw(definition, editor.Model, _inventor.TransientGeometry);
+            TableRenderer.Draw(document, definition, editor.Model, _inventor.TransientGeometry);
             TableStorage.Write(definition, editor.Model);
             transaction.End();
         }
