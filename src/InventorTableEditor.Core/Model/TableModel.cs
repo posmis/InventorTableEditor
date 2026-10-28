@@ -18,6 +18,10 @@ public sealed class TableModel
 
     public bool HasHeader { get; set; }
 
+    /// <summary>Размер окна редактора и масштаб при последней правке этой таблицы; null — ещё не открывалась.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public EditorView? Editor { get; set; }
+
     public List<double> ColumnWidths { get; set; } = new();
 
     public List<double> RowHeights { get; set; } = new();
@@ -422,5 +426,6 @@ public sealed class TableModel
         }
 
         RepairMerges();
+        Editor?.Normalize();
     }
 }

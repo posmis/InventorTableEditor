@@ -26,8 +26,11 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Пикселей на мм при масштабе 100 % — натуральный размер на экране.</summary>
     private const double PxPerMm = 96.0 / 25.4;
 
-    /// <summary>Масштаб запоминается до закрытия Inventor, как в Excel — для следующего открытия окна.</summary>
-    private static double _lastZoom = 1.5;
+    /// <summary>
+    /// Размер окна и масштаб последней открытой таблицы — для новых таблиц (до закрытия Inventor).
+    /// У каждой таблицы свои размер и масштаб хранятся в ней самой (<see cref="TableModel.Editor"/>).
+    /// </summary>
+    private static EditorView _lastView = new();
 
     private static readonly Brush HeaderBackground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2));
 
@@ -84,10 +87,15 @@ internal sealed class TableEditorWindow : Window
 
         Resources.MergedDictionaries.Add(_theme);
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
-        Width = 1100;
-        Height = 700;
-        MinWidth = 720;
-        MinHeight = 440;
+        MinWidth = EditorView.MinWidth;
+        MinHeight = EditorView.MinHeight;
+        var view = (Model.Editor ?? _lastView).Clone();
+        view.Normalize();
+        // Окно не больше рабочей области экрана (таблицу могли открыть на большом мониторе).
+        Width = Math.Min(view.Width, SystemParameters.WorkArea.Width);
+        Height = Math.Min(view.Height, SystemParameters.WorkArea.Height);
+        if (view.Maximized)
+            WindowState = WindowState.Maximized;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         FontFamily = new FontFamily("Segoe UI");
@@ -97,7 +105,8 @@ internal sealed class TableEditorWindow : Window
         UseLayoutRounding = true;
 
         Content = BuildLayout(isNew ? "Вставить в чертёж" : "Применить");
-        SetZoom(_lastZoom);
+        SetZoom(view.Zoom);
+        Closing += (_, _) => _lastView = CurrentView();
         RebuildGrid();
     }
 
@@ -669,6 +678,8 @@ internal sealed class TableEditorWindow : Window
         accept.Click += (_, _) =>
         {
             ApplySizeBoxes();
+            // Размер окна и масштаб сохраняются вместе с таблицей — при следующем открытии окно будет таким же.
+            Model.Editor = CurrentView();
             DialogResult = true;
         };
         var cancel = new Button { Content = "Отмена", Style = ThemeStyle("SecondaryButton"), IsCancel = true };
@@ -709,12 +720,27 @@ internal sealed class TableEditorWindow : Window
     private void SetZoom(double zoom)
     {
         zoom = Zoom.Clamp(zoom);
-        _lastZoom = zoom;
         _zoomTransform.ScaleX = zoom;
         _zoomTransform.ScaleY = zoom;
         _zoomText.Text = $"{zoom * 100:0} %";
         if (Math.Abs(_zoomSlider.Value - zoom * 100) > 0.5)
             _zoomSlider.Value = zoom * 100;
+    }
+
+    /// <summary>Текущие размер окна (без развёртывания на весь экран) и масштаб таблицы.</summary>
+    private EditorView CurrentView()
+    {
+        var maximized = WindowState == WindowState.Maximized;
+        var bounds = maximized && !RestoreBounds.IsEmpty ? RestoreBounds : new Rect(0, 0, ActualWidth, ActualHeight);
+        var view = new EditorView
+        {
+            Width = bounds.Width,
+            Height = bounds.Height,
+            Maximized = maximized,
+            Zoom = _zoomTransform.ScaleX,
+        };
+        view.Normalize();
+        return view;
     }
 
     // ---------- Формат текста ----------
