@@ -67,8 +67,11 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Идёт протягивание мышью для выделения ячеек.</summary>
     private bool _draggingRange;
 
-    /// <summary>Перетаскивание правой границы столбца: столбец, точка начала (px сетки) и исходная ширина, мм.</summary>
-    private (int Column, double StartX, double StartWidth)? _resize;
+    /// <summary>
+    /// Перетаскивание границы: правой — ширина столбца, нижней — высота строки. Номер столбца или строки,
+    /// точка начала (px сетки по X или Y) и исходный размер, мм.
+    /// </summary>
+    private (bool Row, int Index, double Start, double StartSize)? _resize;
 
     /// <summary>Шаг отмены для перетаскивания уже записан (записывается при первом изменении ширины).</summary>
     private bool _resizeRecorded;
@@ -170,6 +173,9 @@ internal sealed class TableEditorWindow : Window
         _grid.PreviewMouseLeftButtonDown += OnGridMouseDown;
         _grid.PreviewMouseMove += OnGridMouseMove;
         _grid.PreviewMouseLeftButtonUp += OnGridMouseUp;
+        _grid.PreviewMouseRightButtonDown += OnGridRightButtonDown;
+        _grid.ContextMenu = new ContextMenu();
+        _grid.ContextMenuOpening += (_, _) => FillContextMenu(_grid.ContextMenu);
         _grid.MouseLeave += (_, _) =>
         {
             if (_resize != null)
@@ -213,10 +219,13 @@ internal sealed class TableEditorWindow : Window
     private void OnGridMouseDown(object sender, MouseButtonEventArgs e)
     {
         var point = e.GetPosition(_grid);
-        if (BorderAt(point) is { } column)
+        if (BorderAt(point) is { } border)
         {
-            // Правая граница столбца: перетаскивание меняет ширину только этого столбца.
-            _resize = (column, point.X, Model.ColumnWidths[column]);
+            // Правая граница меняет ширину только этого столбца, нижняя — высоту только этой строки
+            // (от фактической высоты: строка могла вырасти под текст).
+            _resize = border.Row
+                ? (true, border.Index, point.Y, RowHeight(border.Index))
+                : (false, border.Index, point.X, Model.ColumnWidths[border.Index]);
             _resizeRecorded = false;
             _grid.CaptureMouse();
             e.Handled = true;
@@ -246,15 +255,15 @@ internal sealed class TableEditorWindow : Window
         var point = e.GetPosition(_grid);
         if (_resize is { } resize)
         {
-            ResizeColumn(resize, point);
+            Resize(resize, point);
             e.Handled = true;
             return;
         }
 
-        // У правой границы столбца — стрелка ширины поверх курсора ячейки.
-        var onBorder = e.LeftButton != MouseButtonState.Pressed && BorderAt(point) != null;
-        _grid.Cursor = onBorder ? Cursors.SizeWE : null;
-        _grid.ForceCursor = onBorder;
+        // У границы — стрелка размера поверх курсора ячейки.
+        var border = e.LeftButton != MouseButtonState.Pressed ? BorderAt(point) : null;
+        _grid.Cursor = border == null ? null : border.Value.Row ? Cursors.SizeNS : Cursors.SizeWE;
+        _grid.ForceCursor = border != null;
 
         if (_draggingRange && e.LeftButton == MouseButtonState.Pressed && CellAt(e.GetPosition(_grid)) is { } cell
             && _session.ExtendSelection(cell.Row, cell.Column))
@@ -274,11 +283,13 @@ internal sealed class TableEditorWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>Ширина столбца по сдвигу мыши: шаг 1 мм, таблица растёт или сужается справа.</summary>
-    private void ResizeColumn((int Column, double StartX, double StartWidth) resize, Point point)
+    /// <summary>Размер по сдвигу мыши: шаг 1 мм; таблица растёт или сужается справа или снизу.</summary>
+    private void Resize((bool Row, int Index, double Start, double StartSize) resize, Point point)
     {
-        var width = MmParser.SnapToMillimetre(resize.StartWidth, (point.X - resize.StartX) / PxPerMm);
-        if (Math.Abs(width - Model.ColumnWidths[resize.Column]) < 1e-9)
+        var delta = ((resize.Row ? point.Y : point.X) - resize.Start) / PxPerMm;
+        var size = MmParser.SnapToMillimetre(resize.StartSize, delta);
+        var current = resize.Row ? Model.RowHeights[resize.Index] : Model.ColumnWidths[resize.Index];
+        if (Math.Abs(size - current) < 1e-9)
             return;
 
         if (!_resizeRecorded)
@@ -288,27 +299,70 @@ internal sealed class TableEditorWindow : Window
             _resizeRecorded = true;
         }
 
-        _session.SetColumnWidth(resize.Column, width, record: false);
-        _grid.ColumnDefinitions[resize.Column].Width = new GridLength(width * PxPerMm);
+        if (resize.Row)
+        {
+            _session.SetRowHeight(resize.Index, size, record: false);
+        }
+        else
+        {
+            _session.SetColumnWidth(resize.Index, size, record: false);
+            _grid.ColumnDefinitions[resize.Index].Width = new GridLength(size * PxPerMm);
+        }
+
         RefreshLayout();
     }
 
-    /// <summary>Столбец, у правой границы которого точка (координаты сетки без масштаба); null — не у границы.</summary>
-    private int? BorderAt(Point point)
-    {
-        if (point.Y < 0 || point.Y > _grid.ActualHeight)
-            return null;
+    /// <summary>Фактическая высота строки (с учётом текста), мм.</summary>
+    private double RowHeight(int row) =>
+        _layout != null ? _layout.RowEdges[row + 1] - _layout.RowEdges[row] : Model.RowHeights[row];
 
+    /// <summary>
+    /// Граница под точкой (координаты сетки без масштаба): правая граница столбца или нижняя граница строки.
+    /// Внутренние границы объединённых ячеек не рисуются — за них не потянуть. null — не у границы.
+    /// </summary>
+    private (bool Row, int Index)? BorderAt(Point point)
+    {
         var grip = BorderGrip / _zoomTransform.ScaleX;
-        var edge = 0.0;
-        for (var column = 0; column < _grid.ColumnDefinitions.Count; column++)
+        var columns = _grid.ColumnDefinitions.Select(c => c.ActualWidth).ToList();
+        var rows = _grid.RowDefinitions.Select(r => r.ActualHeight).ToList();
+        var row = Index(point.Y, rows, grip);
+        var column = Index(point.X, columns, grip);
+
+        var x = 0.0;
+        for (var c = 0; c < columns.Count; c++)
         {
-            edge += _grid.ColumnDefinitions[column].ActualWidth;
-            if (Math.Abs(point.X - edge) <= grip)
-                return column;
+            x += columns[c];
+            if (Math.Abs(point.X - x) <= grip && row >= 0 && Visible(row, c, row, c + 1, c == columns.Count - 1))
+                return (false, c);
+        }
+
+        var y = 0.0;
+        for (var r = 0; r < rows.Count; r++)
+        {
+            y += rows[r];
+            if (Math.Abs(point.Y - y) <= grip && column >= 0 && Visible(r, column, r + 1, column, r == rows.Count - 1))
+                return (true, r);
         }
 
         return null;
+
+        // Граница между двумя клетками видна, если они в разных ячейках (или это край таблицы).
+        bool Visible(int r1, int c1, int r2, int c2, bool outerEdge) =>
+            outerEdge || Model.GetMerge(r1, c1) != Model.GetMerge(r2, c2);
+
+        // Строка или столбец под координатой с запасом на захват у краёв таблицы; −1 — вне таблицы.
+        static int Index(double position, List<double> sizes, double margin)
+        {
+            var edge = 0.0;
+            for (var i = 0; i < sizes.Count; i++)
+            {
+                edge += sizes[i];
+                if (position < edge)
+                    return position >= -margin ? i : -1;
+            }
+
+            return position <= edge + margin ? sizes.Count - 1 : -1;
+        }
     }
 
     private void ClearRange()
@@ -568,14 +622,16 @@ internal sealed class TableEditorWindow : Window
                       + "Выключено: перенос только по Enter, длинная строка сжимается.",
             Style = ThemeStyle("FlatToggle"),
         };
-        button.Click += (_, _) =>
-        {
-            _session.SetWrapText(!_session.WrapText);
-            RefreshLayout();
-            SyncFormatBar();
-            FocusActiveEditor();
-        };
+        button.Click += (_, _) => ToggleWrap();
         return button;
+    }
+
+    private void ToggleWrap()
+    {
+        _session.SetWrapText(!_session.WrapText);
+        RefreshLayout();
+        SyncFormatBar();
+        FocusActiveEditor();
     }
 
     private Button Flat(UIElement icon, string tooltip, Action action)
@@ -597,10 +653,12 @@ internal sealed class TableEditorWindow : Window
             _mergeButton = Structure(Icons.Merge(), "Объединить выделенные ячейки\n(выделите ячейки мышью или Shift+щелчком)", () => _session.MergeSelection()),
             _splitButton = Structure(Icons.Split(), "Разделить объединённую ячейку", () => _session.SplitCurrent())));
         panel.Children.Add(LabeledRow("Столбец:",
+            Flat(Icons.Column(1, Icons.Badge.None), "Выделить столбец", SelectColumn),
             Structure(Icons.Column(0, Icons.Badge.Add), "Вставить столбец слева", _session.InsertColumnLeft),
             Structure(Icons.Column(2, Icons.Badge.Add), "Вставить столбец справа", _session.InsertColumnRight),
             Structure(Icons.Column(1, Icons.Badge.Remove), "Удалить столбец", _session.DeleteColumn)));
         panel.Children.Add(LabeledRow("Строка:",
+            Flat(Icons.Row(1, Icons.Badge.None), "Выделить строку", SelectRow),
             Structure(Icons.Row(0, Icons.Badge.Add), "Вставить строку сверху", _session.InsertRowAbove),
             Structure(Icons.Row(2, Icons.Badge.Add), "Вставить строку снизу", _session.InsertRowBelow),
             Structure(Icons.Row(1, Icons.Badge.Remove), "Удалить строку", _session.DeleteRow)));
@@ -653,20 +711,92 @@ internal sealed class TableEditorWindow : Window
     private Button Structure(UIElement icon, string tooltip, Action action)
     {
         var button = new Button { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatButton"), Margin = new Thickness(0, 0, 2, 0) };
-        button.Click += (_, _) =>
-        {
-            try
-            {
-                action();
-            }
-            catch (InvalidOperationException ex)
-            {
-                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-
-            RebuildGrid();
-        };
+        button.Click += (_, _) => RunStructure(action);
         return button;
+    }
+
+    /// <summary>Изменение структуры таблицы: действие, сообщение об ошибке, перестроение сетки.</summary>
+    private void RunStructure(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        RebuildGrid();
+    }
+
+    private void SelectColumn()
+    {
+        _session.SelectColumn();
+        ShowSelection();
+        FocusActiveEditor();
+    }
+
+    private void SelectRow()
+    {
+        _session.SelectRow();
+        ShowSelection();
+        FocusActiveEditor();
+    }
+
+    // ---------- Контекстное меню ----------
+
+    /// <summary>
+    /// Правая кнопка, как в Excel: внутри выделенных ячеек выделение остаётся, вне — ячейка под мышью
+    /// становится текущей.
+    /// </summary>
+    private void OnGridRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (CellAt(e.GetPosition(_grid)) is not { } cell)
+            return;
+
+        if (_session.Range?.Contains(cell.Row, cell.Column) == true)
+            return;
+
+        ClearRange();
+        if (_editors.TryGetValue(Model.AnchorOf(cell.Row, cell.Column), out var editor))
+            editor.Focus();
+    }
+
+    /// <summary>Пункты меню собираются при каждом открытии — с актуальной доступностью.</summary>
+    private void FillContextMenu(ContextMenu menu)
+    {
+        menu.Items.Clear();
+        var editor = ActiveEditor;
+        var single = _session.Range == null;
+
+        Item("Вырезать", "Ctrl+X", null, single && editor?.CanCopy == true, () => editor?.Cut());
+        Item("Копировать", "Ctrl+C", null, single && editor?.CanCopy == true, () => editor?.Copy());
+        Item("Вставить", "Ctrl+V", null, single && Clipboard.ContainsText(), () => editor?.Paste());
+        menu.Items.Add(new Separator());
+        Item("Объединить ячейки", null, Icons.Merge(), _session.CanMerge, () => RunStructure(() => _session.MergeSelection()));
+        Item("Разделить ячейку", null, Icons.Split(), _session.CanSplit, () => RunStructure(() => _session.SplitCurrent()));
+        menu.Items.Add(new Separator());
+        Item("Вставить строку сверху", null, Icons.Row(0, Icons.Badge.Add), true, () => RunStructure(_session.InsertRowAbove));
+        Item("Вставить строку снизу", null, Icons.Row(2, Icons.Badge.Add), true, () => RunStructure(_session.InsertRowBelow));
+        Item("Вставить столбец слева", null, Icons.Column(0, Icons.Badge.Add), true, () => RunStructure(_session.InsertColumnLeft));
+        Item("Вставить столбец справа", null, Icons.Column(2, Icons.Badge.Add), true, () => RunStructure(_session.InsertColumnRight));
+        Item("Удалить строку", null, Icons.Row(1, Icons.Badge.Remove), Model.RowCount > 1, () => RunStructure(_session.DeleteRow));
+        Item("Удалить столбец", null, Icons.Column(1, Icons.Badge.Remove), Model.ColumnCount > 1, () => RunStructure(_session.DeleteColumn));
+        menu.Items.Add(new Separator());
+        Item("Выделить строку", null, Icons.Row(1, Icons.Badge.None), true, SelectRow);
+        Item("Выделить столбец", null, Icons.Column(1, Icons.Badge.None), true, SelectColumn);
+        menu.Items.Add(new Separator());
+        var wrap = new MenuItem { Header = "Переносить текст", IsCheckable = true, IsChecked = _session.WrapText, Icon = Icons.WrapText() };
+        wrap.Click += (_, _) => ToggleWrap();
+        menu.Items.Add(wrap);
+
+        void Item(string header, string? gesture, UIElement? icon, bool enabled, Action action)
+        {
+            var item = new MenuItem { Header = header, InputGestureText = gesture ?? string.Empty, Icon = icon, IsEnabled = enabled };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
     }
 
     // ---------- Строка состояния ----------

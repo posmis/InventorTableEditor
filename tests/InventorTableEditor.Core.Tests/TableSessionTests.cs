@@ -373,4 +373,49 @@ public class TableSessionTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => Session(1, 2).SetColumnWidth(2, 10));
     }
+
+    [Fact]
+    public void SelectColumnAndRow_WholeTable()
+    {
+        var session = Session(3, 4);
+        session.MoveTo(1, 2);
+
+        Assert.True(session.SelectColumn());
+        Assert.Equal(new CellRange(0, 2, 2, 2), session.Range);
+        Assert.Equal((1, 2), (session.Row, session.Column));
+
+        Assert.True(session.SelectRow());
+        Assert.Equal(new CellRange(1, 0, 1, 3), session.Range);
+        Assert.False(session.SelectRow());
+    }
+
+    [Fact]
+    public void SelectColumn_ExpandsToMerges_AndSingleCellTableSelectsNothing()
+    {
+        var session = Session(2, 3);
+        session.Model.Merge(new CellRange(1, 1, 1, 2));
+        session.MoveTo(0, 2);
+
+        session.SelectColumn();
+        Assert.Equal(new CellRange(0, 1, 1, 2), session.Range);
+
+        var single = Session(1, 1);
+        Assert.False(single.SelectColumn());
+        Assert.Null(single.Range);
+    }
+
+    [Fact]
+    public void DragRowBorder_OneUndoStep()
+    {
+        var session = Session(2, 1);
+
+        session.Record();
+        session.SetRowHeight(0, 12, record: false);
+        session.SetRowHeight(0, 15, record: false);
+
+        Assert.Equal(new[] { 15.0, 10 }, session.Model.RowHeights);
+        session.Undo();
+        Assert.Equal(new[] { 10.0, 10 }, session.Model.RowHeights);
+        Assert.False(session.CanUndo);
+    }
 }

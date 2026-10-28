@@ -129,6 +129,33 @@ public sealed class TableSession
         return true;
     }
 
+    /// <summary>Выделяет весь столбец текущей ячейки (у объединённой — все её столбцы), как в КОМПАС-3D.</summary>
+    public bool SelectColumn()
+    {
+        var merge = Model.GetMerge(Row, Column);
+        return SelectWhole(new CellRange(0, merge.Left, Model.RowCount - 1, merge.Right));
+    }
+
+    /// <summary>Выделяет всю строку текущей ячейки (у объединённой — все её строки).</summary>
+    public bool SelectRow()
+    {
+        var merge = Model.GetMerge(Row, Column);
+        return SelectWhole(new CellRange(merge.Top, 0, merge.Bottom, Model.ColumnCount - 1));
+    }
+
+    private bool SelectWhole(CellRange range)
+    {
+        range = Model.ExpandToMerges(range);
+        _anchor = (Row, Column);
+        // Вся строка или столбец — одна ячейка (таблица 1×1 или всё объединено): выделять нечего.
+        CellRange? selection = range == Model.GetMerge(Row, Column) ? null : range;
+        if (selection == Range)
+            return false;
+
+        Range = selection;
+        return true;
+    }
+
     /// <summary>
     /// Включить или выключить формат у нескольких ячеек, как в Excel: если формат есть у всего текста,
     /// он снимается, иначе включается. Пустые ячейки (null) не учитываются; если пусты все — включается.
@@ -348,6 +375,12 @@ public sealed class TableSession
     /// (перетаскивание границы мышью: шаг записывается один раз в начале).
     /// </summary>
     public bool SetColumnWidth(int column, double widthMm, bool record = true) => SetSize(Model.ColumnWidths, column, widthMm, record);
+
+    /// <summary>
+    /// Заданная высота строки (перетаскивание нижней границы мышью); остальные строки не меняются.
+    /// <paramref name="record"/> = false — без шага отмены (шаг записывается один раз в начале перетаскивания).
+    /// </summary>
+    public bool SetRowHeight(int row, double heightMm, bool record = true) => SetSize(Model.RowHeights, row, heightMm, record);
 
     /// <summary>
     /// Высота текущей ячейки (наименьшая — строка растёт под текст). У объединённой меняется её нижняя строка,

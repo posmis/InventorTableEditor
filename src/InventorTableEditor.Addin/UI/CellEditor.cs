@@ -357,6 +357,30 @@ internal sealed class CellEditor : FrameworkElement
             Clipboard.SetText(Buffer.SelectedText.Replace("\n", Environment.NewLine));
     }
 
+    /// <summary>Есть выделенный текст — для пунктов «Вырезать» и «Копировать» контекстного меню.</summary>
+    public bool CanCopy => Buffer.HasSelection;
+
+    public void Copy() => CopySelection();
+
+    public void Cut()
+    {
+        if (!Buffer.HasSelection)
+            return;
+
+        CopySelection();
+        Buffer.DeleteSelection();
+        AfterChange(contentChanged: true);
+    }
+
+    public void Paste()
+    {
+        if (!Clipboard.ContainsText())
+            return;
+
+        Buffer.Insert(Clipboard.GetText());
+        AfterChange(contentChanged: true);
+    }
+
     private void AfterChange(bool contentChanged, EditKind kind = EditKind.Other)
     {
         RestartBlink();
