@@ -146,6 +146,22 @@ internal static class Icons
         return canvas;
     }
 
+    /// <summary>Шаблоны: лист с загнутым углом и таблицей с синей строкой заголовков.</summary>
+    public static UIElement Templates()
+    {
+        var drawing = new DrawingGroup();
+        var sheet = Geometry.Parse("M2.5,1.5 H10.5 L13.5,4.5 V14.5 H2.5 Z");
+        drawing.Children.Add(new GeometryDrawing(Brushes.White, new Pen(Ink, 1), sheet));
+        Line(drawing, Ink, 1, new Point(10.5, 1.5), new Point(10.5, 4.5));
+        Line(drawing, Ink, 1, new Point(10.5, 4.5), new Point(13.5, 4.5));
+        Fill(drawing, AccentFill, new Rect(4.5, 6, 7, 2.5));
+        Stroke(drawing, Accent, 1, new Rect(4.5, 6, 7, 7));
+        Line(drawing, Accent, 1, new Point(4.5, 8.5), new Point(11.5, 8.5));
+        Line(drawing, Accent, 1, new Point(4.5, 10.75), new Point(11.5, 10.75));
+        Line(drawing, Accent, 1, new Point(8, 6), new Point(8, 13));
+        return Image(drawing);
+    }
+
     /// <summary>Настройки: шестерёнка с восемью зубцами.</summary>
     public static UIElement Settings()
     {

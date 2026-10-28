@@ -239,6 +239,23 @@ internal sealed class TableEditorWindow : Window
         }
     }
 
+    /// <summary>Шаблоны: открытая таблица заменяется таблицей из шаблона (один шаг отмены).</summary>
+    private void OpenTemplates()
+    {
+        ApplySizeBoxes(focusEditor: false);
+        var window = new TemplatesWindow(new Core.Templates.TemplateLibrary(AddinPaths.TemplatesDirectory), Model) { Owner = this };
+        if (window.ShowDialog() == true && window.Result is { } model)
+        {
+            _session.ReplaceTable(model);
+            UpdateMetrics();
+            RebuildGrid();
+        }
+        else
+        {
+            FocusActiveEditor();
+        }
+    }
+
     // ---------- Выделение ячеек ----------
 
     /// <summary>Щелчок по ячейке начинает выделение; Shift+щелчок — прямоугольник от текущей ячейки, как в Excel.</summary>
@@ -720,7 +737,9 @@ internal sealed class TableEditorWindow : Window
         groups.Children.Add(RibbonGroup("Начертание", style));
         groups.Children.Add(RibbonGroup("Выравнивание", alignment));
         groups.Children.Add(RibbonGroup("Вставка", Row(SymbolsButton())));
-        groups.Children.Add(RibbonGroup("Таблица", Row(Flat(Icons.Settings(), "Настройки таблицы\nОформление, линии, индексы, перенос, настройки по умолчанию", OpenSettings))));
+        groups.Children.Add(RibbonGroup("Таблица", Row(
+            Flat(Icons.Templates(), "Шаблоны таблиц\nСоздать таблицу по шаблону, сохранить эту таблицу как шаблон", OpenTemplates),
+            Flat(Icons.Settings(), "Настройки таблицы\nОформление, линии, индексы, перенос, настройки по умолчанию", OpenSettings))));
 
         return new Border
         {

@@ -382,6 +382,14 @@ public sealed class TableSession
     }
 
     /// <summary>Включает или выключает строку заголовков; текущей становится первая строка.</summary>
+    /// <summary>Заменяет всю таблицу (новая по шаблону) — один шаг отмены; курсор в первой ячейке.</summary>
+    public void ReplaceTable(TableModel model) => Change(() =>
+    {
+        Model = model;
+        Row = 0;
+        Column = 0;
+    });
+
     /// <summary>Оформление из окна настроек — один шаг отмены. false — ничего не изменилось.</summary>
     public bool ApplyStyle(TableStyle style)
     {
