@@ -26,9 +26,6 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Пикселей на мм при масштабе 100 % — натуральный размер на экране.</summary>
     private const double PxPerMm = 96.0 / 25.4;
 
-    private const double MinZoom = 0.25;
-    private const double MaxZoom = 4.0;
-
     /// <summary>Масштаб запоминается до закрытия Inventor, как в Excel — для следующего открытия окна.</summary>
     private static double _lastZoom = 1.5;
 
@@ -37,7 +34,7 @@ internal sealed class TableEditorWindow : Window
     private readonly ResourceDictionary _theme = ThemeLoader.Load();
     private readonly Grid _grid = new() { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
     private readonly ScaleTransform _zoomTransform = new(1, 1);
-    private readonly Slider _zoomSlider = new() { Minimum = MinZoom * 100, Maximum = MaxZoom * 100, Width = 130, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Slider _zoomSlider = new() { Minimum = Zoom.Min * 100, Maximum = Zoom.Max * 100, Width = 130, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _zoomText = new() { Width = 42, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBox _columnWidthBox = new() { Width = 56 };
     private readonly TextBox _rowHeightBox = new() { Width = 56 };
@@ -45,11 +42,8 @@ internal sealed class TableEditorWindow : Window
     private readonly ComboBox _fontBox = new() { Width = 168, IsEditable = true, ToolTip = "Шрифт", Margin = new Thickness(0, 0, 4, 0) };
     private readonly ComboBox _sizeBox = new() { Width = 58, IsEditable = true, ToolTip = "Высота шрифта, мм" };
     private readonly Dictionary<(int Row, int Column), CellEditor> _editors = new();
-    private readonly TableHistory _history = new();
+    private readonly TableSession _session;
     private ITextMetrics _metrics;
-
-    /// <summary>Идёт действие над несколькими ячейками: в историю оно записано одним шагом заранее.</summary>
-    private bool _batch;
 
     private ToggleButton? _boldButton;
     private ToggleButton? _italicButton;
@@ -57,12 +51,7 @@ internal sealed class TableEditorWindow : Window
     private ToggleButton? _superscriptButton;
     private ToggleButton? _subscriptButton;
 
-    private int _row;
-    private int _column;
-
-    /// <summary>Выделение ячеек как в Excel: от начальной ячейки до текущей; null — одна ячейка.</summary>
-    private CellRange? _range;
-    private (int Row, int Column) _rangeAnchor;
+    /// <summary>Идёт протягивание мышью для выделения ячеек.</summary>
     private bool _draggingRange;
 
     /// <summary>Списки шрифта и размера обновляются из формата под курсором — в это время их события игнорируются.</summary>
@@ -70,7 +59,7 @@ internal sealed class TableEditorWindow : Window
 
     public TableEditorWindow(TableModel model, bool isNew)
     {
-        Model = TableModel.FromJson(model.ToJson());
+        _session = new TableSession(TableModel.FromJson(model.ToJson()), () => ActiveEditor?.Buffer.Caret ?? 0);
         _metrics = new WpfTextMetrics(Model.Style);
         EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName)?.EmPerCapHeight ?? 1.4;
 
@@ -93,9 +82,10 @@ internal sealed class TableEditorWindow : Window
         RebuildGrid();
     }
 
-    public TableModel Model { get; private set; }
+    /// <summary>Таблица после правки — её забирает команда по кнопке подтверждения.</summary>
+    public TableModel Model => _session.Model;
 
-    private CellEditor? ActiveEditor => _editors.TryGetValue((_row, _column), out var editor) ? editor : null;
+    private CellEditor? ActiveEditor => _editors.TryGetValue((_session.Row, _session.Column), out var editor) ? editor : null;
 
     private Brush ThemeBrush(string key) => (Brush)_theme[key];
 
@@ -142,7 +132,7 @@ internal sealed class TableEditorWindow : Window
                 return;
 
             // Ctrl+колесо — масштаб, как в Excel: шаг 10 %.
-            SetZoom(_zoomTransform.ScaleX + (e.Delta > 0 ? 0.1 : -0.1));
+            SetZoom(Zoom.Next(_zoomTransform.ScaleX, e.Delta));
             e.Handled = true;
         };
         root.Children.Add(scroll);
@@ -158,51 +148,20 @@ internal sealed class TableEditorWindow : Window
 
     // ---------- История отмены ----------
 
-    private TableCursor CurrentCursor() => new(_row, _column, ActiveEditor?.Buffer.Caret ?? 0);
+    private void Undo() => Restore(_session.Undo());
 
-    /// <summary>Запоминает таблицу до действия (одним шагом для всей таблицы, как в Excel).</summary>
-    private void RecordUndo(string? mergeKey = null)
+    private void Redo() => Restore(_session.Redo());
+
+    /// <summary>Показывает таблицу из истории и ставит курсор туда, где было действие.</summary>
+    private void Restore(int? caret)
     {
-        if (!_batch)
-            _history.Record(Model, CurrentCursor(), mergeKey);
-    }
-
-    /// <summary>Действие над несколькими ячейками — один шаг истории.</summary>
-    private void Batch(Action action)
-    {
-        RecordUndo();
-        _batch = true;
-        try
-        {
-            action();
-        }
-        finally
-        {
-            _batch = false;
-        }
-    }
-
-    private void Undo() => Restore(_history.Undo(Model, CurrentCursor()));
-
-    private void Redo() => Restore(_history.Redo(Model, CurrentCursor()));
-
-    /// <summary>Подставляет таблицу из истории и ставит курсор туда, где было действие.</summary>
-    private void Restore((TableModel Model, TableCursor Cursor)? step)
-    {
-        if (step is not { } value)
+        if (caret is not { } position)
             return;
 
-        Model = value.Model;
         _metrics = new WpfTextMetrics(Model.Style);
-        _row = value.Cursor.Row;
-        _column = value.Cursor.Column;
         RebuildGrid(focusEditor: false);
-
         if (ActiveEditor is { } editor)
-        {
-            var caret = value.Cursor.Caret;
-            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => editor.FocusAt(caret)));
-        }
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => editor.FocusAt(position)));
     }
 
     // ---------- Выделение ячеек ----------
@@ -213,51 +172,39 @@ internal sealed class TableEditorWindow : Window
         if (CellAt(e.GetPosition(_grid)) is not { } cell)
             return;
 
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && cell != (_row, _column))
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && cell != (_session.Row, _session.Column))
         {
-            _rangeAnchor = (_row, _column);
-            SetRange(cell);
+            _session.ExtendSelection(cell.Row, cell.Column, fromCurrent: true);
+            ShowSelection();
             // Курсор остаётся в начальной ячейке, текст в ячейке под мышью не выделяется.
             e.Handled = true;
             return;
         }
 
-        ClearRange();
-        _rangeAnchor = cell;
+        _session.BeginSelection(cell.Row, cell.Column);
+        ShowSelection();
         _draggingRange = true;
     }
 
     /// <summary>Протягивание мышью за пределы начальной ячейки выделяет прямоугольник ячеек.</summary>
     private void OnGridMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_draggingRange || e.LeftButton != MouseButtonState.Pressed || CellAt(e.GetPosition(_grid)) is not { } cell)
-            return;
-
-        if (cell == _rangeAnchor)
-            ClearRange();
-        else
-            SetRange(cell);
-    }
-
-    private void SetRange((int Row, int Column) to)
-    {
-        var range = CellRange.Between(_rangeAnchor, to);
-        if (_range == range)
-            return;
-
-        _range = range;
-        foreach (var ((row, column), editor) in _editors)
-            editor.InRange = range.Contains(row, column);
+        if (_draggingRange && e.LeftButton == MouseButtonState.Pressed && CellAt(e.GetPosition(_grid)) is { } cell
+            && _session.ExtendSelection(cell.Row, cell.Column))
+            ShowSelection();
     }
 
     private void ClearRange()
     {
-        if (_range == null)
-            return;
+        if (_session.ClearSelection())
+            ShowSelection();
+    }
 
-        _range = null;
-        foreach (var editor in _editors.Values)
-            editor.InRange = false;
+    /// <summary>Подсветка выделенных ячеек по выделению сеанса.</summary>
+    private void ShowSelection()
+    {
+        foreach (var ((row, column), editor) in _editors)
+            editor.InRange = _session.Range?.Contains(row, column) ?? false;
     }
 
     /// <summary>Ячейка под точкой сетки (координаты сетки без масштаба); null — вне таблицы.</summary>
@@ -294,7 +241,7 @@ internal sealed class TableEditorWindow : Window
 
         // Курсор переставлен клавишами — следующий набор начнёт новый шаг отмены, как в Word.
         if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.Tab)
-            _history.BreakMerge();
+            _session.BreakMerge();
 
         // Отмена и повтор — для всей таблицы, а не для одной ячейки.
         if (ctrl && (e.Key == Key.Z || e.Key == Key.Y))
@@ -307,14 +254,14 @@ internal sealed class TableEditorWindow : Window
             return;
         }
 
-        if (_range is not { } range)
+        if (_session.Range is not { } range)
             return;
 
         switch (e.Key)
         {
             case Key.Delete:
                 // Delete очищает все выделенные ячейки, как в Excel.
-                Batch(() =>
+                _session.Batch(() =>
                 {
                     foreach (var editor in EditorsIn(range))
                         editor.EditAll(b => b.DeleteSelection());
@@ -437,14 +384,14 @@ internal sealed class TableEditorWindow : Window
     /// </summary>
     private void ToggleFormat(Func<TextRun, bool> isOn, Action<TextRun, bool> set)
     {
-        if (_range is { } range)
+        if (_session.Range is { } range)
         {
             var editors = EditorsIn(range).ToList();
-            var allOn = editors.Select(e => e.AllText(isOn)).Where(v => v != null).All(v => v == true);
-            Batch(() =>
+            var turnOn = TableSession.ShouldTurnOn(editors.Select(e => e.AllText(isOn)));
+            _session.Batch(() =>
             {
                 foreach (var editor in editors)
-                    editor.EditAll(b => b.ApplyFormat(f => set(f, !allOn)));
+                    editor.EditAll(b => b.ApplyFormat(f => set(f, turnOn)));
             });
         }
         else
@@ -462,9 +409,9 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Действие с форматом — над всеми выделенными ячейками целиком или над текущей ячейкой.</summary>
     private void EditSelection(Action<CellTextBuffer> action)
     {
-        if (_range is { } range)
+        if (_session.Range is { } range)
         {
-            Batch(() =>
+            _session.Batch(() =>
             {
                 foreach (var editor in EditorsIn(range))
                     editor.EditAll(action);
@@ -478,10 +425,6 @@ internal sealed class TableEditorWindow : Window
 
     private IEnumerable<CellEditor> EditorsIn(CellRange range) =>
         range.Cells().Select(cell => _editors.TryGetValue(cell, out var editor) ? editor : null).OfType<CellEditor>();
-
-    /// <summary>Ячейки, к которым относятся выравнивание и формат: выделенные или текущая.</summary>
-    private IEnumerable<(int Row, int Column)> TargetCells() =>
-        _range?.Cells() ?? new[] { (_row, _column) };
 
     private Button Flat(UIElement icon, string tooltip, Action action)
     {
@@ -499,13 +442,13 @@ internal sealed class TableEditorWindow : Window
 
         panel.Children.Add(new TextBlock { Text = "СТРУКТУРА", Style = ThemeStyle("SectionHeader") });
         panel.Children.Add(LabeledRow("Столбец:",
-            Structure(Icons.Column(0, Icons.Badge.Add), "Вставить столбец слева", () => Model.InsertColumn(_column)),
-            Structure(Icons.Column(2, Icons.Badge.Add), "Вставить столбец справа", () => { Model.InsertColumn(_column + 1); _column++; }),
-            Structure(Icons.Column(1, Icons.Badge.Remove), "Удалить столбец", () => Model.RemoveColumn(_column))));
+            Structure(Icons.Column(0, Icons.Badge.Add), "Вставить столбец слева", _session.InsertColumnLeft),
+            Structure(Icons.Column(2, Icons.Badge.Add), "Вставить столбец справа", _session.InsertColumnRight),
+            Structure(Icons.Column(1, Icons.Badge.Remove), "Удалить столбец", _session.DeleteColumn)));
         panel.Children.Add(LabeledRow("Строка:",
-            Structure(Icons.Row(0, Icons.Badge.Add), "Вставить строку сверху", () => Model.InsertRow(_row)),
-            Structure(Icons.Row(2, Icons.Badge.Add), "Вставить строку снизу", () => { Model.InsertRow(_row + 1); _row++; }),
-            Structure(Icons.Row(1, Icons.Badge.Remove), "Удалить строку", () => Model.RemoveRow(_row))));
+            Structure(Icons.Row(0, Icons.Badge.Add), "Вставить строку сверху", _session.InsertRowAbove),
+            Structure(Icons.Row(2, Icons.Badge.Add), "Вставить строку снизу", _session.InsertRowBelow),
+            Structure(Icons.Row(1, Icons.Badge.Remove), "Удалить строку", _session.DeleteRow)));
 
         panel.Children.Add(new TextBlock { Text = "РАЗМЕРЫ, ММ", Style = ThemeStyle("SectionHeader") });
         panel.Children.Add(LabeledRow("Ширина:", SizeField(_columnWidthBox)));
@@ -514,9 +457,7 @@ internal sealed class TableEditorWindow : Window
         panel.Children.Add(new TextBlock { Text = "ТАБЛИЦА", Style = ThemeStyle("SectionHeader") });
         _headerBox.Click += (_, _) =>
         {
-            RecordUndo();
-            Model.SetHeader(_headerBox.IsChecked == true);
-            _row = 0;
+            _session.SetHeader(_headerBox.IsChecked == true);
             RebuildGrid();
         };
         panel.Children.Add(_headerBox);
@@ -559,7 +500,6 @@ internal sealed class TableEditorWindow : Window
         var button = new Button { Content = icon, ToolTip = tooltip, Style = ThemeStyle("FlatButton"), Margin = new Thickness(0, 0, 2, 0) };
         button.Click += (_, _) =>
         {
-            RecordUndo();
             try
             {
                 action();
@@ -588,8 +528,8 @@ internal sealed class TableEditorWindow : Window
         var cancel = new Button { Content = "Отмена", Style = ThemeStyle("SecondaryButton"), IsCancel = true };
 
         _zoomSlider.ValueChanged += (_, e) => SetZoom(e.NewValue / 100);
-        var zoomOut = Flat(new TextBlock { Text = "−", FontSize = 14 }, "Уменьшить (Ctrl+колесо вниз)", () => SetZoom(_zoomTransform.ScaleX - 0.1));
-        var zoomIn = Flat(new TextBlock { Text = "+", FontSize = 14 }, "Увеличить (Ctrl+колесо вверх)", () => SetZoom(_zoomTransform.ScaleX + 0.1));
+        var zoomOut = Flat(new TextBlock { Text = "−", FontSize = 14 }, "Уменьшить (Ctrl+колесо вниз)", () => SetZoom(Zoom.Next(_zoomTransform.ScaleX, -1)));
+        var zoomIn = Flat(new TextBlock { Text = "+", FontSize = 14 }, "Увеличить (Ctrl+колесо вверх)", () => SetZoom(Zoom.Next(_zoomTransform.ScaleX, +1)));
         var zoomReset = Flat(_zoomText, "Натуральный размер, 100 % (Ctrl+0)", () => SetZoom(1));
 
         var hint = new TextBlock
@@ -622,7 +562,7 @@ internal sealed class TableEditorWindow : Window
 
     private void SetZoom(double zoom)
     {
-        zoom = Math.Round(Math.Clamp(zoom, MinZoom, MaxZoom), 2);
+        zoom = Zoom.Clamp(zoom);
         _lastZoom = zoom;
         _zoomTransform.ScaleX = zoom;
         _zoomTransform.ScaleY = zoom;
@@ -679,7 +619,7 @@ internal sealed class TableEditorWindow : Window
 
     private void ApplySize(string text)
     {
-        if (!TryParseMm(text, 0.5, 100, out var sizeMm))
+        if (!MmParser.TryParse(text, 0.5, 100, out var sizeMm))
             return;
 
         EditSelection(b => b.SetFontSize(sizeMm));
@@ -688,18 +628,14 @@ internal sealed class TableEditorWindow : Window
 
     private void SetHorizontalAlignment(HorizontalTextAlignment alignment)
     {
-        RecordUndo();
-        foreach (var (row, column) in TargetCells())
-            Model.GetCell(row, column).HorizontalAlignment = alignment;
+        _session.SetHorizontalAlignment(alignment);
         RefreshLayout();
         FocusActiveEditor();
     }
 
     private void SetVerticalAlignment(VerticalTextAlignment alignment)
     {
-        RecordUndo();
-        foreach (var (row, column) in TargetCells())
-            Model.GetCell(row, column).VerticalAlignment = alignment;
+        _session.SetVerticalAlignment(alignment);
         RefreshLayout();
         FocusActiveEditor();
     }
@@ -755,39 +691,31 @@ internal sealed class TableEditorWindow : Window
 
     private void ApplySizeBoxes(bool focusEditor = true)
     {
-        var widthChanged = TryParseMm(_columnWidthBox.Text, out var width) && width != Model.ColumnWidths[_column];
-        var heightChanged = TryParseMm(_rowHeightBox.Text, out var height) && height != Model.RowHeights[_row];
-        if (!widthChanged && !heightChanged)
-            return;
+        var changed = false;
+        if (MmParser.TryParseCellSize(_columnWidthBox.Text, out var width))
+            changed |= _session.SetColumnWidth(width);
+        if (MmParser.TryParseCellSize(_rowHeightBox.Text, out var height))
+            changed |= _session.SetRowHeight(height);
 
-        RecordUndo();
-        if (widthChanged)
-            Model.ColumnWidths[_column] = width;
-        if (heightChanged)
-            Model.RowHeights[_row] = height;
-        RebuildGrid(focusEditor);
+        if (changed)
+            RebuildGrid(focusEditor);
+        else
+            UpdateSizeBoxes();
     }
-
-    private static bool TryParseMm(string text, out double value) => TryParseMm(text, 2, 1000, out value);
-
-    private static bool TryParseMm(string text, double min, double max, out double value) =>
-        double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min && value <= max;
 
     private void UpdateSizeBoxes()
     {
-        _columnWidthBox.Text = Model.ColumnWidths[_column].ToString("0.##", CultureInfo.CurrentCulture);
-        _rowHeightBox.Text = Model.RowHeights[_row].ToString("0.##", CultureInfo.CurrentCulture);
+        _columnWidthBox.Text = MmParser.Format(Model.ColumnWidths[_session.Column]);
+        _rowHeightBox.Text = MmParser.Format(Model.RowHeights[_session.Row]);
     }
 
     // ---------- Сетка таблицы ----------
 
     private void RebuildGrid(bool focusEditor = true)
     {
-        _row = Math.Clamp(_row, 0, Model.RowCount - 1);
-        _column = Math.Clamp(_column, 0, Model.ColumnCount - 1);
+        _session.ClearSelection();
         _headerBox.IsChecked = Model.HasHeader;
 
-        _range = null;
         _grid.Children.Clear();
         _grid.ColumnDefinitions.Clear();
         _grid.RowDefinitions.Clear();
@@ -835,64 +763,29 @@ internal sealed class TableEditorWindow : Window
 
         editor.ContentChanged += (e, kind) =>
         {
-            var before = Model.GetCell(row, column);
-            var after = e.Buffer.ToCell(before);
-            if (before.SameContent(after))
-            {
+            if (_session.ReplaceCell(row, column, e.Buffer.ToCell(new TableCell()), kind))
+                RefreshLayout();
+            else
                 e.Layout = e.Layout;
-                return;
-            }
-
-            RecordUndo(kind switch
-            {
-                EditKind.Typing => $"type:{row}:{column}",
-                EditKind.Deleting => $"delete:{row}:{column}",
-                _ => null,
-            });
-            Model.SetCell(row, column, after);
-            RefreshLayout();
         };
         // Курсор переставлен мышью — следующий набор начнёт новый шаг отмены.
-        editor.PreviewMouseLeftButtonDown += (_, _) => _history.BreakMerge();
+        editor.PreviewMouseLeftButtonDown += (_, _) => _session.BreakMerge();
         editor.StateChanged += _ => SyncFormatBar();
         editor.GotKeyboardFocus += (_, _) =>
         {
-            _history.BreakMerge();
-            _row = row;
-            _column = column;
+            _session.MoveTo(row, column);
             UpdateSizeBoxes();
             SyncFormatBar();
         };
-        editor.NavigateRequested += (_, rows, columns) => Navigate(row + rows, column + columns, columns);
-        return editor;
-    }
-
-    /// <summary>
-    /// Переход в соседнюю ячейку: Tab — следующая (в конце строки — первая ячейка следующей строки),
-    /// стрелки вверх/вниз с первой/последней строки текста — ячейка выше/ниже.
-    /// </summary>
-    private void Navigate(int row, int column, int columnStep)
-    {
-        if (columnStep != 0)
+        editor.NavigateRequested += (_, rows, columns) =>
         {
-            if (column >= Model.ColumnCount)
+            if (_session.Neighbor(rows, columns) is { } cell && _editors.TryGetValue(cell, out var target))
             {
-                column = 0;
-                row++;
+                _session.MoveTo(cell.Row, cell.Column);
+                target.FocusAtEnd();
             }
-            else if (column < 0)
-            {
-                column = Model.ColumnCount - 1;
-                row--;
-            }
-        }
-
-        if (row < 0 || row >= Model.RowCount || !_editors.TryGetValue((row, column), out var target))
-            return;
-
-        _row = row;
-        _column = column;
-        target.FocusAtEnd();
+        };
+        return editor;
     }
 
     /// <summary>

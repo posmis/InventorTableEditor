@@ -136,10 +136,9 @@ internal sealed class CellEditor : FrameworkElement
     /// <summary>Применяет изменение формата или текста из панели инструментов.</summary>
     public void Edit(Action<CellTextBuffer> action)
     {
-        var text = Buffer.Text;
-        var cell = Buffer.ToCell(new TableCell());
+        var before = Buffer.ToCell(new TableCell());
         action(Buffer);
-        AfterChange(contentChanged: text != Buffer.Text || !SameRuns(cell, Buffer.ToCell(new TableCell())));
+        AfterChange(contentChanged: !before.SameContent(Buffer.ToCell(new TableCell())));
     }
 
     protected override void OnGotKeyboardFocus(KeyboardFocusChangedEventArgs e)
@@ -481,20 +480,4 @@ internal sealed class CellEditor : FrameworkElement
         brush.Freeze();
         return brush;
     }
-
-    private static bool SameRuns(TableCell a, TableCell b) =>
-        a.Runs.Count == b.Runs.Count && a.Runs.Zip(b.Runs).All(p => p.First.Text == p.Second.Text && p.First.SameFormat(p.Second));
-}
-
-/// <summary>Вид правки текста ячейки — для объединения шагов истории отмены.</summary>
-internal enum EditKind
-{
-    /// <summary>Набор текста: подряд в одной ячейке — один шаг.</summary>
-    Typing,
-
-    /// <summary>Backspace и Delete: подряд в одной ячейке — один шаг.</summary>
-    Deleting,
-
-    /// <summary>Прочее (формат, вставка, перенос строки) — отдельный шаг.</summary>
-    Other,
 }

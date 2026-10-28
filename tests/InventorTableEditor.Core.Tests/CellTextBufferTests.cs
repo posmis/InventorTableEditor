@@ -296,4 +296,55 @@ public class CellTextBufferTests
         Assert.True(Buffer(" a").HasText);
         Assert.False(new CellTextBuffer(new TableCell(), Style).HasText);
     }
+
+    [Fact]
+    public void InsertEmptyWithoutSelection_IsNoOp()
+    {
+        var buffer = Buffer("a");
+
+        buffer.Insert(string.Empty);
+
+        Assert.Equal("a", buffer.Text);
+        Assert.False(buffer.Undo());
+    }
+
+    [Fact]
+    public void SelectedText_SpansLines()
+    {
+        var buffer = Buffer("ab\ncd");
+        buffer.MoveTo(1, extend: false);
+        buffer.MoveTo(4, extend: true);
+
+        Assert.Equal("b\nc", buffer.SelectedText);
+    }
+
+    [Fact]
+    public void WordNavigation_AtEdges()
+    {
+        var buffer = Buffer("ab");
+
+        Assert.Equal(0, buffer.WordLeft(0));
+        Assert.Equal(2, buffer.WordRight(2));
+        Assert.Equal(2, buffer.WordRight(-5 + 5));
+    }
+
+    [Fact]
+    public void ToCell_EmptyBuffer()
+    {
+        Assert.Empty(new CellTextBuffer(new TableCell(), Style).ToCell(new TableCell()).Runs);
+    }
+
+    [Fact]
+    public void CurrentFormat_IsSelectionStartOrTypingFormat()
+    {
+        var cell = new TableCell { Runs = { new TextRun("a") { Bold = true }, new TextRun("b") } };
+        var buffer = new CellTextBuffer(cell, Style);
+
+        buffer.MoveTo(0, extend: false);
+        buffer.MoveTo(2, extend: true);
+        Assert.True(buffer.CurrentFormat.Bold);
+
+        buffer.MoveTo(2, extend: false);
+        Assert.False(buffer.CurrentFormat.Bold);
+    }
 }

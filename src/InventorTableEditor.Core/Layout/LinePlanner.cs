@@ -92,8 +92,16 @@ public static class LinePlanner
                 pens.Add(new PenPosition(run, size, pen, extents.AdvanceMm, segment.BaselineMm));
                 if (!string.IsNullOrWhiteSpace(run.Text))
                 {
-                    runs.Add(new PlannedRun(pens.Count - 1, run, size, pen, pen + extents.BoxLeftMm, segment.BaselineMm, segment.BaselineMm - extents.TopMm));
-                    left = Math.Min(left, pen + extents.BoxLeftMm);
+                    // Пробелы в начале фрагмента только сдвигают надпись: Inventor меряет надпись по буквам
+                    // и пробелы в её начале не учитывает.
+                    var lead = run.Text.Length - run.Text.TrimStart(' ').Length;
+                    var visible = lead == 0 ? run : run.WithText(run.Text[lead..]);
+                    var visiblePen = lead == 0 ? pen : pen + metrics.Measure(run, run.Text[..lead], size).AdvanceMm;
+                    var visibleExtents = lead == 0 ? extents : metrics.Measure(visible, visible.Text, size);
+
+                    runs.Add(new PlannedRun(pens.Count - 1, visible, size, visiblePen, visiblePen + visibleExtents.BoxLeftMm,
+                        segment.BaselineMm, segment.BaselineMm - visibleExtents.TopMm));
+                    left = Math.Min(left, visiblePen + visibleExtents.BoxLeftMm);
                     right = Math.Max(right, pen + extents.AdvanceMm + extents.OverhangMm);
                 }
 
