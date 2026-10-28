@@ -62,6 +62,21 @@ internal sealed class SketchCanvas
         }
     }
 
+    /// <summary>Габарит надписи после установки, мм таблицы (Y вниз): левый, верхний, правый, нижний края; null — недоступен.</summary>
+    public (double Left, double Top, double Right, double Bottom)? TryGetBoundsMm(Inventor.TextBox box)
+    {
+        try
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            return (Units.CmToMm(range.MinPoint.X), -Units.CmToMm(range.MaxPoint.Y),
+                    Units.CmToMm(range.MaxPoint.X), -Units.CmToMm(range.MinPoint.Y));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
     internal static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
