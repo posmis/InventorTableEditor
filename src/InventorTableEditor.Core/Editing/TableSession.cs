@@ -265,19 +265,28 @@ public sealed class TableSession
     }
 
     /// <summary>Ширина текущего столбца; false — значение не изменилось.</summary>
-    public bool SetColumnWidth(double widthMm) => SetSize(Model.ColumnWidths, Column, widthMm);
+    public bool SetColumnWidth(double widthMm) => SetColumnWidth(Column, widthMm);
+
+    /// <summary>
+    /// Ширина столбца; остальные столбцы не меняются. <paramref name="record"/> = false — без шага отмены
+    /// (перетаскивание границы мышью: шаг записывается один раз в начале).
+    /// </summary>
+    public bool SetColumnWidth(int column, double widthMm, bool record = true) => SetSize(Model.ColumnWidths, column, widthMm, record);
 
     /// <summary>Высота текущей строки; false — значение не изменилось.</summary>
-    public bool SetRowHeight(double heightMm) => SetSize(Model.RowHeights, Row, heightMm);
+    public bool SetRowHeight(double heightMm) => SetSize(Model.RowHeights, Row, heightMm, record: true);
 
-    private bool SetSize(List<double> sizes, int index, double value)
+    private bool SetSize(List<double> sizes, int index, double value, bool record)
     {
+        if (index < 0 || index >= sizes.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
         if (!double.IsFinite(value) || value < MmParser.MinCellSize || value > MmParser.MaxCellSize)
             throw new ArgumentOutOfRangeException(nameof(value));
         if (Math.Abs(sizes[index] - value) < 1e-9)
             return false;
 
-        Record();
+        if (record)
+            Record();
         sizes[index] = value;
         return true;
     }

@@ -61,4 +61,16 @@ public class MmParserAndZoomTests
     {
         Assert.Equal(expected, Zoom.Next(zoom, delta), 6);
     }
+
+    [Theory]
+    [InlineData(20, 0.4, 20)]
+    [InlineData(20, 0.5, 21)]
+    [InlineData(20, -3.6, 16)]
+    [InlineData(35.5, 0, 36)]
+    [InlineData(5, -10, MmParser.MinCellSize)]
+    [InlineData(990, 50, MmParser.MaxCellSize)]
+    public void SnapToMillimetre_StepsOfOneMm(double start, double delta, double expected)
+    {
+        Assert.Equal(expected, MmParser.SnapToMillimetre(start, delta), 6);
+    }
 }

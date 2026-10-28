@@ -23,6 +23,13 @@ public static class MmParser
 
     public static bool TryParseCellSize(string? text, out double value) => TryParse(text, MinCellSize, MaxCellSize, out value);
 
+    /// <summary>
+    /// Размер при перетаскивании границы мышью: исходный плюс сдвиг, с шагом 1 мм,
+    /// в пределах <see cref="MinCellSize"/>…<see cref="MaxCellSize"/>.
+    /// </summary>
+    public static double SnapToMillimetre(double startMm, double deltaMm) =>
+        Math.Clamp(Math.Round(startMm + deltaMm, MidpointRounding.AwayFromZero), MinCellSize, MaxCellSize);
+
     /// <summary>Размер для поля ввода: до сотых, без лишних нулей, с десятичным разделителем Windows.</summary>
     public static string Format(double value, CultureInfo? culture = null) =>
         value.ToString("0.##", culture ?? CultureInfo.CurrentCulture);

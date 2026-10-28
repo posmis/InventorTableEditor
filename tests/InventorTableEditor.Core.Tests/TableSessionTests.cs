@@ -339,4 +339,29 @@ public class TableSessionTests
         Assert.Throws<ArgumentOutOfRangeException>(() => session.SetColumnWidth(value));
         Assert.Throws<ArgumentOutOfRangeException>(() => session.SetRowHeight(value));
     }
+
+    [Fact]
+    public void DragColumnBorder_ChangesOnlyThatColumn_OneUndoStep()
+    {
+        var session = Session(1, 3);
+        session.MoveTo(0, 2);
+
+        // Начало перетаскивания: шаг отмены один раз, дальше — без записи.
+        session.Record();
+        session.SetColumnWidth(0, 21, record: false);
+        session.SetColumnWidth(0, 25, record: false);
+
+        Assert.Equal(new[] { 25.0, 20, 20 }, session.Model.ColumnWidths);
+        Assert.Equal(2, session.Column);
+
+        session.Undo();
+        Assert.Equal(new[] { 20.0, 20, 20 }, session.Model.ColumnWidths);
+        Assert.False(session.CanUndo);
+    }
+
+    [Fact]
+    public void SetColumnWidth_RejectsWrongColumn()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Session(1, 2).SetColumnWidth(2, 10));
+    }
 }

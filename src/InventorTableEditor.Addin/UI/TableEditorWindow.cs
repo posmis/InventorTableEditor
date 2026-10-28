@@ -61,6 +61,15 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Идёт протягивание мышью для выделения ячеек.</summary>
     private bool _draggingRange;
 
+    /// <summary>Перетаскивание правой границы столбца: столбец, точка начала (px сетки) и исходная ширина, мм.</summary>
+    private (int Column, double StartX, double StartWidth)? _resize;
+
+    /// <summary>Шаг отмены для перетаскивания уже записан (записывается при первом изменении ширины).</summary>
+    private bool _resizeRecorded;
+
+    /// <summary>На каком расстоянии от границы столбца (px экрана) курсор становится стрелкой ширины.</summary>
+    private const double BorderGrip = 4;
+
     /// <summary>Списки шрифта и размера обновляются из формата под курсором — в это время их события игнорируются.</summary>
     private bool _syncingFormat;
 
@@ -148,7 +157,22 @@ internal sealed class TableEditorWindow : Window
         PreviewTextInput += (_, _) => ClearRange();
         _grid.PreviewMouseLeftButtonDown += OnGridMouseDown;
         _grid.PreviewMouseMove += OnGridMouseMove;
-        _grid.PreviewMouseLeftButtonUp += (_, _) => _draggingRange = false;
+        _grid.PreviewMouseLeftButtonUp += OnGridMouseUp;
+        _grid.MouseLeave += (_, _) =>
+        {
+            if (_resize != null)
+                return;
+            _grid.Cursor = null;
+            _grid.ForceCursor = false;
+        };
+        // Захват мыши потерян (например, Alt+Tab во время перетаскивания) — перетаскивание заканчивается.
+        _grid.LostMouseCapture += (_, _) =>
+        {
+            if (_resize == null)
+                return;
+            _resize = null;
+            UpdateSizeBoxes();
+        };
 
         return root;
     }
@@ -176,7 +200,18 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Щелчок по ячейке начинает выделение; Shift+щелчок — прямоугольник от текущей ячейки, как в Excel.</summary>
     private void OnGridMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (CellAt(e.GetPosition(_grid)) is not { } cell)
+        var point = e.GetPosition(_grid);
+        if (BorderAt(point) is { } column)
+        {
+            // Правая граница столбца: перетаскивание меняет ширину только этого столбца.
+            _resize = (column, point.X, Model.ColumnWidths[column]);
+            _resizeRecorded = false;
+            _grid.CaptureMouse();
+            e.Handled = true;
+            return;
+        }
+
+        if (CellAt(point) is not { } cell)
             return;
 
         if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0 && cell != (_session.Row, _session.Column))
@@ -196,9 +231,72 @@ internal sealed class TableEditorWindow : Window
     /// <summary>Протягивание мышью за пределы начальной ячейки выделяет прямоугольник ячеек.</summary>
     private void OnGridMouseMove(object sender, MouseEventArgs e)
     {
+        var point = e.GetPosition(_grid);
+        if (_resize is { } resize)
+        {
+            ResizeColumn(resize, point);
+            e.Handled = true;
+            return;
+        }
+
+        // У правой границы столбца — стрелка ширины поверх курсора ячейки.
+        var onBorder = e.LeftButton != MouseButtonState.Pressed && BorderAt(point) != null;
+        _grid.Cursor = onBorder ? Cursors.SizeWE : null;
+        _grid.ForceCursor = onBorder;
+
         if (_draggingRange && e.LeftButton == MouseButtonState.Pressed && CellAt(e.GetPosition(_grid)) is { } cell
             && _session.ExtendSelection(cell.Row, cell.Column))
             ShowSelection();
+    }
+
+    private void OnGridMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        _draggingRange = false;
+        if (_resize == null)
+            return;
+
+        _grid.ReleaseMouseCapture();
+        _resize = null;
+        UpdateSizeBoxes();
+        FocusActiveEditor();
+        e.Handled = true;
+    }
+
+    /// <summary>Ширина столбца по сдвигу мыши: шаг 1 мм, таблица растёт или сужается справа.</summary>
+    private void ResizeColumn((int Column, double StartX, double StartWidth) resize, Point point)
+    {
+        var width = MmParser.SnapToMillimetre(resize.StartWidth, (point.X - resize.StartX) / PxPerMm);
+        if (Math.Abs(width - Model.ColumnWidths[resize.Column]) < 1e-9)
+            return;
+
+        if (!_resizeRecorded)
+        {
+            // Одно перетаскивание — один шаг отмены.
+            _session.Record();
+            _resizeRecorded = true;
+        }
+
+        _session.SetColumnWidth(resize.Column, width, record: false);
+        _grid.ColumnDefinitions[resize.Column].Width = new GridLength(width * PxPerMm);
+        RefreshLayout();
+    }
+
+    /// <summary>Столбец, у правой границы которого точка (координаты сетки без масштаба); null — не у границы.</summary>
+    private int? BorderAt(Point point)
+    {
+        if (point.Y < 0 || point.Y > _grid.ActualHeight)
+            return null;
+
+        var grip = BorderGrip / _zoomTransform.ScaleX;
+        var edge = 0.0;
+        for (var column = 0; column < _grid.ColumnDefinitions.Count; column++)
+        {
+            edge += _grid.ColumnDefinitions[column].ActualWidth;
+            if (Math.Abs(point.X - edge) <= grip)
+                return column;
+        }
+
+        return null;
     }
 
     private void ClearRange()
