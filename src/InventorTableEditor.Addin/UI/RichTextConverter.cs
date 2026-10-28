@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
 using InventorTableEditor.Core.Model;
+using TableCell = InventorTableEditor.Core.Model.TableCell;
 
 namespace InventorTableEditor.Addin.UI;
 

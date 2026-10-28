@@ -8,7 +8,9 @@ using Inventor;
 using InventorTableEditor.Core;
 using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
+using CellText = InventorTableEditor.Core.Layout.CellText;
 using HorizontalTextAlignment = InventorTableEditor.Core.Model.HorizontalTextAlignment;
+using TextSegment = InventorTableEditor.Core.Layout.TextSegment;
 using TableStyle = InventorTableEditor.Core.Model.TableStyle;
 
 namespace InventorTableEditor.Addin.Drawing;
