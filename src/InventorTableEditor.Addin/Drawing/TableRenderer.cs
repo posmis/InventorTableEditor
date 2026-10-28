@@ -119,6 +119,7 @@ internal static class TableRenderer
                     box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
                     box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
                     placed.Add((box, lineWidth, segment.BaselineMm, size));
+                    LogSize(box, run.Text, size);
                     lineWidth += MeasureWidthMm(box, run.Text, size);
                 }
             }
@@ -143,8 +144,41 @@ internal static class TableRenderer
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
     private static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
-    /// <summary>Доля высоты шрифта, на которую низ надписи Inventor опущен ниже базовой линии.</summary>
-    private const double DescentRatio = 0.2;
+    /// <summary>
+    /// Доля высоты шрифта, на которую низ надписи Inventor опущен ниже базовой линии.
+    /// По проверке в Inventor 2025 низ надписи совпадает с базовой линией.
+    /// </summary>
+    private const double DescentRatio = 0.0;
+
+    /// <summary>Диагностика: какие размеры надписи сообщает Inventor (Width, Height, RangeBox), в мм.</summary>
+    private static void LogSize(Inventor.TextBox box, string text, double sizeMm)
+    {
+        string Read(Func<double> read)
+        {
+            try
+            {
+                return Units.CmToMm(read()).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+                return "нет";
+            }
+        }
+
+        var width = Read(() => ((dynamic)box).Width);
+        var height = Read(() => ((dynamic)box).Height);
+        var rangeWidth = Read(() =>
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            return range.MaxPoint.X - range.MinPoint.X;
+        });
+        var rangeHeight = Read(() =>
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            return range.MaxPoint.Y - range.MinPoint.Y;
+        });
+        AddinLog.Write($"Надпись «{text}» {sizeMm:0.##} мм: Width={width} Height={height} RangeBox={rangeWidth}x{rangeHeight}");
+    }
 
     /// <summary>Высота надписи в мм; при неудаче — оценка по размеру шрифта.</summary>
     private static double MeasureHeightMm(Inventor.TextBox box, double sizeMm)
