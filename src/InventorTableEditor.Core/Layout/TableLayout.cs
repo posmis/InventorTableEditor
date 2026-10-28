@@ -47,12 +47,21 @@ public sealed class TableLayout
     /// <summary>
     /// Высота строки с учётом содержимого: заданная, но не меньше нужной под текст.
     /// </summary>
-    public static double EffectiveRowHeight(TableModel model, int row)
+    public static double EffectiveRowHeight(TableModel model, int row, ITextMeasurer? measurer = null) =>
+        EffectiveRowHeight(model, row, WrapRow(model, row, measurer));
+
+    private static double EffectiveRowHeight(TableModel model, int row, List<List<List<TextRun>>> wrappedRow)
     {
         var style = model.Style;
-        var required = model.Cells[row].Max(cell => BlockHeight(cell, style)) + 2 * style.PaddingMm;
+        var required = wrappedRow.Max(lines => BlockHeight(lines, style)) + 2 * style.PaddingMm;
         return Math.Max(model.RowHeights[row], required);
     }
+
+    /// <summary>Строки текста каждой ячейки строки таблицы после переноса по ширине столбца.</summary>
+    private static List<List<List<TextRun>>> WrapRow(TableModel model, int row, ITextMeasurer? measurer) =>
+        Enumerable.Range(0, model.ColumnCount)
+            .Select(c => TextWrapper.Wrap(model.Cells[row][c], model.Style, model.ColumnWidths[c] - 2 * model.Style.PaddingMm, measurer))
+            .ToList();
 
     /// <summary>Размер шрифта фрагмента в чертеже, мм (индексы уменьшены).</summary>
     public static double RenderedSize(TextRun run, TableStyle style)
@@ -62,9 +71,9 @@ public sealed class TableLayout
     }
 
     /// <summary>Высота блока текста: от верха первой строки до базовой линии последней.</summary>
-    private static double BlockHeight(TableCell cell, TableStyle style)
+    private static double BlockHeight(List<List<TextRun>> lines, TableStyle style)
     {
-        var sizes = cell.SplitLines().Select(line => LineSize(line, style)).ToList();
+        var sizes = lines.Select(line => LineSize(line, style)).ToList();
         return sizes[0] + sizes.Skip(1).Sum(size => size * style.LineSpacing);
     }
 
@@ -76,10 +85,9 @@ public sealed class TableLayout
         return source.Count > 0 ? source.Max(r => r.FontSizeMm ?? style.FontSizeMm) : style.FontSizeMm;
     }
 
-    private static List<TextLine> LayoutLines(TableCell cell, TableStyle style, double cellTop, double cellHeight, VerticalTextAlignment alignment)
+    private static List<TextLine> LayoutLines(List<List<TextRun>> lines, TableStyle style, double cellTop, double cellHeight, VerticalTextAlignment alignment)
     {
-        var lines = cell.SplitLines();
-        var blockHeight = BlockHeight(cell, style);
+        var blockHeight = BlockHeight(lines, style);
         var blockTop = alignment switch
         {
             VerticalTextAlignment.Top => cellTop + style.PaddingMm,
@@ -124,9 +132,11 @@ public sealed class TableLayout
         return segments;
     }
 
-    public static TableLayout Build(TableModel model)
+    /// <param name="measurer">Измеритель ширины текста для переноса по словам; null — без переноса.</param>
+    public static TableLayout Build(TableModel model, ITextMeasurer? measurer = null)
     {
         var style = model.Style;
+        var wrapped = Enumerable.Range(0, model.RowCount).Select(r => WrapRow(model, r, measurer)).ToList();
 
         var columnEdges = new double[model.ColumnCount + 1];
         for (var c = 0; c < model.ColumnCount; c++)
@@ -134,7 +144,7 @@ public sealed class TableLayout
 
         var rowEdges = new double[model.RowCount + 1];
         for (var r = 0; r < model.RowCount; r++)
-            rowEdges[r + 1] = rowEdges[r] + EffectiveRowHeight(model, r);
+            rowEdges[r + 1] = rowEdges[r] + EffectiveRowHeight(model, r, wrapped[r]);
 
         var width = columnEdges[^1];
         var height = rowEdges[^1];
@@ -169,7 +179,7 @@ public sealed class TableLayout
                 var top = rowEdges[r];
                 var cellHeight = rowEdges[r + 1] - top;
                 texts.Add(new CellText(r, c, columnEdges[c], top, columnEdges[c + 1] - columnEdges[c], cellHeight,
-                    LayoutLines(cell, style, top, cellHeight, model.GetVerticalAlignment(r, c)), alignment));
+                    LayoutLines(wrapped[r][c], style, top, cellHeight, model.GetVerticalAlignment(r, c)), alignment));
             }
         }
 

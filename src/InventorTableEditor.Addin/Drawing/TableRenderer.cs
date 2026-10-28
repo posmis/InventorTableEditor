@@ -23,7 +23,7 @@ internal static class TableRenderer
 
     public static void Draw(DrawingDocument document, SketchedSymbolDefinition definition, TableModel model, TransientGeometry geometry)
     {
-        var layout = TableLayout.Build(model);
+        var layout = TableLayout.Build(model, new FontMetricsMeasurer(model.Style));
         var styles = PrepareStyles(document, layout, model.Style);
 
         IsDrawing = true;

@@ -38,6 +38,8 @@ internal sealed class TableEditorWindow : Window
     public TableEditorWindow(TableModel model, bool isNew)
     {
         Model = TableModel.FromJson(model.ToJson());
+        RichTextConverter.EmPerTextHeight =
+            InventorTableEditor.Addin.Drawing.FontMetrics.Get(Model.Style.FontName, bold: false, italic: false)?.EmPerCapHeight ?? 1.4;
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
         Width = 1000;
         Height = 650;

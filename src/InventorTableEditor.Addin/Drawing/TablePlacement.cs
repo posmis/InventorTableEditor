@@ -52,7 +52,7 @@ internal sealed class TablePlacement
             var coordinates = graphics.GraphicsDataSets.CreateCoordinateSet(1);
 
             var index = 1;
-            foreach (var line in TableLayout.Build(_model).Lines)
+            foreach (var line in TableLayout.Build(_model, new FontMetricsMeasurer(_model.Style)).Lines)
             {
                 coordinates.Add(index++, geometry.CreatePoint(Units.MmToCm(line.X1), -Units.MmToCm(line.Y1), 0));
                 coordinates.Add(index++, geometry.CreatePoint(Units.MmToCm(line.X2), -Units.MmToCm(line.Y2), 0));

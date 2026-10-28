@@ -14,8 +14,11 @@ namespace InventorTableEditor.Addin.UI;
 /// </summary>
 internal static class RichTextConverter
 {
-    /// <summary>Отношение размера шрифта WPF (em) к высоте шрифта на чертеже.</summary>
-    public const double EmPerTextHeight = 1.4;
+    /// <summary>
+    /// Отношение размера шрифта WPF (em) к высоте шрифта на чертеже (высоте заглавной буквы).
+    /// Задаётся по метрикам шрифта таблицы, чтобы переносы в редакторе совпадали с чертежом.
+    /// </summary>
+    public static double EmPerTextHeight { get; set; } = 1.4;
 
     public static double BaseFontSizePx(TableStyle style, double pxPerMm) => style.FontSizeMm * pxPerMm * EmPerTextHeight;
 

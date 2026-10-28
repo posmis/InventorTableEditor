@@ -30,6 +30,9 @@ internal sealed class FontMetrics
             _capHeightEm = 0.7;
     }
 
+    /// <summary>Кегль (em) в долях высоты заглавной буквы: высота текста Inventor × это число = размер шрифта WPF.</summary>
+    public double EmPerCapHeight => 1.0 / _capHeightEm;
+
     /// <summary>Метрики шрифта или null, если шрифт не найден в Windows.</summary>
     public static FontMetrics? Get(string font, bool bold, bool italic)
     {
