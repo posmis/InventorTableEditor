@@ -17,6 +17,7 @@ internal sealed class TextStyleCache
 
     private readonly DrawingDocument _document;
     private readonly Dictionary<string, TextStyle> _styles = new();
+    private readonly Dictionary<string, double> _widthScales = new();
 
     public TextStyleCache(DrawingDocument document)
     {
@@ -37,8 +38,46 @@ internal sealed class TextStyleCache
         style.Bold = bold;
         style.Italic = italic;
         style.Underline = underline;
+
+        // Стиль примечаний ЕСКД может растягивать текст по ширине. Inventor при этом сообщает
+        // ширину надписи без растяжения, и фрагменты строки налезают друг на друга.
+        TrySet(name, "WidthScale", () => ((dynamic)style).WidthScale = 1.0);
+        TrySet(name, "CharacterSpacing", () => ((dynamic)style).CharacterSpacing = 0.0);
+        _widthScales[name] = ReadWidthScale(style);
+
         _styles[name] = style;
         return style;
+    }
+
+    /// <summary>
+    /// Во сколько раз текст стиля шире, чем сообщает Inventor (растяжение по ширине, если его не удалось убрать).
+    /// </summary>
+    public double WidthScale(TextStyle style) =>
+        _widthScales.TryGetValue(style.Name, out var scale) ? scale : 1.0;
+
+    private static double ReadWidthScale(TextStyle style)
+    {
+        try
+        {
+            double scale = ((dynamic)style).WidthScale;
+            return scale > 0 ? scale : 1.0;
+        }
+        catch (Exception)
+        {
+            return 1.0;
+        }
+    }
+
+    private static void TrySet(string styleName, string property, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            AddinLog.Write($"Стиль «{styleName}»: не удалось задать {property}: {ex.Message}");
+        }
     }
 
     private TextStyle? Find(string name)
@@ -56,7 +95,19 @@ internal sealed class TextStyleCache
     {
         var source = _document.StylesManager.ActiveStandardStyle.ActiveObjectDefaults.GeneralNoteStyle;
         var style = (TextStyle)source.Copy(name);
-        AddinLog.Write("Создан стиль текста: " + name);
+        string Read(string property)
+        {
+            try
+            {
+                return property == "WidthScale" ? ((object)((dynamic)source).WidthScale).ToString()! : ((object)((dynamic)source).CharacterSpacing).ToString()!;
+            }
+            catch (Exception)
+            {
+                return "нет";
+            }
+        }
+
+        AddinLog.Write($"Создан стиль текста: {name} (из «{source.Name}»: WidthScale={Read("WidthScale")}, CharacterSpacing={Read("CharacterSpacing")})");
         return style;
     }
 }

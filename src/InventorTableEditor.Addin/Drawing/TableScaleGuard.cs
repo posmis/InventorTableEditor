@@ -10,10 +10,11 @@ namespace InventorTableEditor.Addin.Drawing;
 /// </summary>
 internal sealed class TableScaleGuard
 {
-    private const double Tolerance = 1e-9;
+    private const double Tolerance = 1e-6;
 
     private readonly Dictionary<string, (DocumentEvents Events, DocumentEventsSink_OnChangeEventHandler Handler)> _subscriptions = new();
     private bool _fixing;
+    private bool _errorLogged;
 
     public void Attach(DrawingDocument document)
     {
@@ -53,7 +54,8 @@ internal sealed class TableScaleGuard
 
     private void ResetScale(DrawingDocument document)
     {
-        if (_fixing)
+        // Во время перестроения таблицы аддином символ менять нельзя (Inventor отвечает E_FAIL).
+        if (_fixing || TableRenderer.IsDrawing)
             return;
 
         _fixing = true;
@@ -73,7 +75,9 @@ internal sealed class TableScaleGuard
         }
         catch (Exception ex)
         {
-            AddinLog.Write("Не удалось вернуть масштаб таблицы: " + ex.Message);
+            if (!_errorLogged)
+                AddinLog.Write("Не удалось вернуть масштаб таблицы: " + ex.Message);
+            _errorLogged = true;
         }
         finally
         {

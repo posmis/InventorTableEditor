@@ -18,11 +18,15 @@ namespace InventorTableEditor.Addin.Drawing;
 /// </summary>
 internal static class TableRenderer
 {
+    /// <summary>Идёт перестроение таблицы: изменения чертежа вызваны самим аддином.</summary>
+    public static bool IsDrawing { get; private set; }
+
     public static void Draw(DrawingDocument document, SketchedSymbolDefinition definition, TableModel model, TransientGeometry geometry)
     {
         var layout = TableLayout.Build(model);
         var styles = PrepareStyles(document, layout, model.Style);
 
+        IsDrawing = true;
         definition.Edit(out DrawingSketch sketch);
         var saved = false;
         try
@@ -34,6 +38,7 @@ internal static class TableRenderer
         finally
         {
             definition.ExitEdit(saved);
+            IsDrawing = false;
         }
     }
 
@@ -114,13 +119,13 @@ internal static class TableRenderer
                 foreach (var run in segment.Runs)
                 {
                     var size = TableLayout.RenderedSize(run, style);
-                    var box = sketch.TextBoxes.AddFitted(Point(geometry, 0, segment.BaselineMm), EscapeText(run.Text),
-                        StyleFor(styles, run, style));
+                    var textStyle = StyleFor(styles, run, style);
+                    var box = sketch.TextBoxes.AddFitted(Point(geometry, 0, segment.BaselineMm), EscapeText(run.Text), textStyle);
                     box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
                     box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
                     placed.Add((box, lineWidth, segment.BaselineMm, size));
                     LogSize(box, run.Text, size);
-                    lineWidth += MeasureWidthMm(box, run.Text, size);
+                    lineWidth += MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
                 }
             }
 
