@@ -113,11 +113,13 @@ internal static class TableRenderer
             foreach (var item in plan.Runs)
             {
                 var origin = Point(geometry, plan.OriginMm + item.BoxLeftMm * plan.WidthScale, item.TopMm);
-                var box = sketch.TextBoxes.AddFitted(origin, EscapeText(item.Run.Text), StyleFor(styles, item.Run, style, plan.WidthScale));
+                var textStyle = StyleFor(styles, item.Run, style, plan.WidthScale);
+                var box = sketch.TextBoxes.AddFitted(origin, EscapeText(item.Run.Text), textStyle);
                 box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
                 box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
                 // После смены выравнивания точка привязки задаётся заново.
                 box.Origin = origin;
+                LogPlacement(box, textStyle, item, plan, style);
             }
 
             foreach (var underline in TextPlanner.Underlines(plan, style))
@@ -129,6 +131,31 @@ internal static class TableRenderer
                 TrySet(() => ((dynamic)stroke).LineWeight = weightCm);
             }
         }
+    }
+
+    /// <summary>
+    /// Диагностика расстановки: где надпись должна быть по метрикам шрифта и где её поставил Inventor, мм.
+    /// </summary>
+    private static void LogPlacement(Inventor.TextBox box, TextStyle textStyle, PlannedRun item, LinePlan plan, TableStyle style)
+    {
+        string Mm(double value) => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        var plannedLeft = plan.OriginMm + item.BoxLeftMm * plan.WidthScale;
+        var plannedRight = plan.OriginMm + (item.PenMm + TextPlanner.AdvanceMm(item.Run, item.Run.Text, style)) * plan.WidthScale;
+        var actual = "нет";
+        try
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            double width = ((dynamic)box).Width;
+            actual = $"RangeBox {Mm(Units.CmToMm(range.MinPoint.X))}..{Mm(Units.CmToMm(range.MaxPoint.X))}, Width {Mm(Units.CmToMm(width))}";
+        }
+        catch (Exception ex)
+        {
+            actual = ex.Message;
+        }
+
+        var run = item.Run;
+        AddinLog.Write($"«{run.Text}» {textStyle.Name}{(run.Bold ? " жирный" : "")}{(run.Italic ? " наклонный" : "")}, сжатие {Mm(plan.WidthScale)}: "
+                       + $"по шрифту {Mm(plannedLeft)}..{Mm(plannedRight)}; Inventor {actual}");
     }
 
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
