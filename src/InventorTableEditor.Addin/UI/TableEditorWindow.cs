@@ -52,6 +52,7 @@ internal sealed class TableEditorWindow : Window
     private ToggleButton? _underlineButton;
     private ToggleButton? _superscriptButton;
     private ToggleButton? _subscriptButton;
+    private ToggleButton? _wrapButton;
 
     /// <summary>Последняя раскладка таблицы — по ней в поле высоты показывается фактическая высота строки.</summary>
     private TableLayout? _layout;
@@ -446,7 +447,9 @@ internal sealed class TableEditorWindow : Window
             Gap(),
             Flat(Icons.Vertical(VerticalTextAlignment.Top), "По верхнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Top)),
             Flat(Icons.Vertical(VerticalTextAlignment.Middle), "По середине", () => SetVerticalAlignment(VerticalTextAlignment.Middle)),
-            Flat(Icons.Vertical(VerticalTextAlignment.Bottom), "По нижнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Bottom)));
+            Flat(Icons.Vertical(VerticalTextAlignment.Bottom), "По нижнему краю", () => SetVerticalAlignment(VerticalTextAlignment.Bottom)),
+            Gap(),
+            _wrapButton = WrapButton());
 
         var groups = new StackPanel { Orientation = Orientation.Horizontal };
         groups.Children.Add(RibbonGroup("Шрифт", font));
@@ -542,6 +545,29 @@ internal sealed class TableEditorWindow : Window
 
     private IEnumerable<CellEditor> EditorsIn(CellRange range) =>
         range.Cells().Select(cell => _editors.TryGetValue(cell, out var editor) ? editor : null).OfType<CellEditor>();
+
+    /// <summary>
+    /// «Переносить текст», как в Excel: включено — текст сначала сжимается до предела из настроек, потом
+    /// переносится по словам; выключено — строки только по Enter, длинная строка сжимается.
+    /// </summary>
+    private ToggleButton WrapButton()
+    {
+        var button = new ToggleButton
+        {
+            Content = Icons.WrapText(),
+            ToolTip = "Переносить текст\nВключено: строка сжимается до предела из настроек, потом переносится по словам.\n"
+                      + "Выключено: перенос только по Enter, длинная строка сжимается.",
+            Style = ThemeStyle("FlatToggle"),
+        };
+        button.Click += (_, _) =>
+        {
+            _session.SetWrapText(!_session.WrapText);
+            RefreshLayout();
+            SyncFormatBar();
+            FocusActiveEditor();
+        };
+        return button;
+    }
 
     private Button Flat(UIElement icon, string tooltip, Action action)
     {
@@ -785,6 +811,7 @@ internal sealed class TableEditorWindow : Window
             SetChecked(_underlineButton, format.Underline);
             SetChecked(_superscriptButton, format.Script == ScriptPosition.Superscript);
             SetChecked(_subscriptButton, format.Script == ScriptPosition.Subscript);
+            SetChecked(_wrapButton, _session.WrapText);
         }
         finally
         {

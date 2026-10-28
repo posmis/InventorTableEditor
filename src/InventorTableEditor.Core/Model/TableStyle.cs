@@ -32,9 +32,15 @@ public sealed class TableStyle
     /// <summary>Опускание базовой линии нижнего индекса в долях размера основного текста.</summary>
     public double SubscriptDrop { get; set; } = 0.25;
 
+    /// <summary>
+    /// Предел сжатия по ширине перед переносом (при включённом переносе): строка сначала сжимается
+    /// до этой доли, и только если не помещается и так — переносится по словам. Настраивается в окне настроек.
+    /// </summary>
+    public double MinScaleBeforeWrap { get; set; } = 0.75;
+
     public double DefaultColumnWidthMm { get; set; } = 20.0;
 
-    public double DefaultRowHeightMm { get; set; } = 8.0;
+    public double DefaultRowHeightMm { get; set; } = 10.0;
 
     public TableStyle Clone() => (TableStyle)MemberwiseClone();
 }

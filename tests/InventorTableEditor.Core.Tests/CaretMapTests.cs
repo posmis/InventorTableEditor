@@ -28,8 +28,8 @@ public class CaretMapTests
     [Fact]
     public void SoftWrap_CaretAtBoundaryBelongsToNextLine()
     {
-        // Ширина 22: доступно 20 мм, «ab cd» (25 мм) переносится после пробела.
-        var map = Map("ab cd", 22);
+        // Ширина 20: доступно 18 мм, с пределом сжатия 75 % — 24 мм; «ab cd» (25 мм) переносится после пробела.
+        var map = Map("ab cd", 20);
 
         Assert.Equal(2, map.Lines.Count);
         Assert.Equal((0, 3), (map.Lines[0].Start, map.Lines[0].End));
@@ -53,7 +53,7 @@ public class CaretMapTests
     [Fact]
     public void HitTest_PicksLineByHeightAndNearestPosition()
     {
-        var map = Map("ab cd", 22);
+        var map = Map("ab cd", 20);
         var second = map.Lines[1];
 
         Assert.Equal(4, map.HitTest(7, second.BaselineMm));
@@ -65,7 +65,7 @@ public class CaretMapTests
     [Fact]
     public void VerticalMove_KeepsXAndStopsAtEdges()
     {
-        var map = Map("ab cd", 22);
+        var map = Map("ab cd", 20);
 
         Assert.Equal(4, map.VerticalMove(1, +1));
         Assert.Equal(1, map.VerticalMove(4, -1));

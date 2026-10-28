@@ -32,7 +32,7 @@ public sealed class CaretMap
     public static CaretMap Build(TableCell cell, CellText layout, TableStyle style, ITextMetrics metrics)
     {
         var lines = new List<CaretLine>();
-        var ranges = TextWrapper.WrapRanges(cell, style, layout.Width - 2 * style.PaddingMm, metrics);
+        var ranges = TextWrapper.WrapRanges(cell, style, TableLayout.WrapWidth(layout.Width, style), layout.Wrap ? metrics : null);
         var defaultFormat = new TextRun(string.Empty, style.Italic);
         for (var i = 0; i < ranges.Count && i < layout.Lines.Count; i++)
         {

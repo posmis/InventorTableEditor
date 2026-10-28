@@ -234,9 +234,9 @@ public class MergeTests
 
         // Рамка + вертикаль между столбцами (во всю высоту) + горизонталь только в правом столбце.
         Assert.Equal(6, layout.Lines.Count);
-        var horizontal = layout.Lines.Single(l => l.Y1 == 8 && l.Y2 == 8);
+        var horizontal = layout.Lines.Single(l => l.Y1 == 10 && l.Y2 == 10);
         Assert.Equal((20.0, 40.0), (horizontal.X1, horizontal.X2));
-        Assert.Single(layout.Lines, l => l.X1 == 20 && l.X2 == 20 && l.Y1 == 0 && l.Y2 == 16);
+        Assert.Single(layout.Lines, l => l.X1 == 20 && l.X2 == 20 && l.Y1 == 0 && l.Y2 == 20);
     }
 
     [Fact]
@@ -248,9 +248,9 @@ public class MergeTests
 
         var text = TableLayout.Build(model).Texts.Single();
 
-        Assert.Equal((0.0, 0.0, 40.0, 16.0), (text.Left, text.Top, text.Width, text.Height));
-        // По центру по вертикали всей объединённой ячейки: (16 − 5) / 2 + 5.
-        Assert.Equal(10.5, text.Lines.Single().BaselineMm, 6);
+        Assert.Equal((0.0, 0.0, 40.0, 20.0), (text.Left, text.Top, text.Width, text.Height));
+        // По центру по вертикали всей объединённой ячейки: (20 − 5) / 2 + 5.
+        Assert.Equal(12.5, text.Lines.Single().BaselineMm, 6);
     }
 
     [Fact]
@@ -262,8 +262,8 @@ public class MergeTests
 
         var layout = TableLayout.Build(model);
 
-        // Нужно 2 + 5 + 2 × 8 = 23 мм, есть 16: нижняя строка +7.
-        Assert.Equal(new[] { 0.0, 8, 23 }, layout.RowEdges);
+        // Нужно 2 + 5 + 2 × 8 = 23 мм, есть 20: нижняя строка +3.
+        Assert.Equal(new[] { 0.0, 10, 23 }, layout.RowEdges);
     }
 
     [Fact]

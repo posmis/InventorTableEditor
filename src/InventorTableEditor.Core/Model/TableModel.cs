@@ -405,6 +405,8 @@ public sealed class TableModel
             throw new InvalidDataException("Повреждённые данные таблицы: размеры строк и столбцов должны быть положительными.");
         if (!(Style.FontSizeMm > 0) || !(Style.ScriptScale > 0) || !(Style.LineSpacing > 0) || Style.PaddingMm < 0)
             throw new InvalidDataException("Повреждённые данные таблицы: недопустимые параметры оформления.");
+        if (!(Style.MinScaleBeforeWrap > 0 && Style.MinScaleBeforeWrap <= 1))
+            Style.MinScaleBeforeWrap = new TableStyle().MinScaleBeforeWrap;
 
         foreach (var row in Cells)
         {

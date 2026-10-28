@@ -12,7 +12,7 @@ public class TableModelTests
         Assert.Equal(3, model.RowCount);
         Assert.Equal(4, model.ColumnCount);
         Assert.All(model.ColumnWidths, w => Assert.Equal(20.0, w));
-        Assert.All(model.RowHeights, h => Assert.Equal(8.0, h));
+        Assert.All(model.RowHeights, h => Assert.Equal(10.0, h));
         Assert.All(model.Cells, row => Assert.Equal(4, row.Count));
     }
 

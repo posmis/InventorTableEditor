@@ -17,6 +17,13 @@ public sealed class TableCell
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public VerticalTextAlignment? VerticalAlignment { get; set; }
 
+    /// <summary>
+    /// Не переносить текст по словам (кнопка «Переносить текст» выключена, как в Excel): строки — только
+    /// по Enter, а строка шире ячейки сжимается по ширине.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NoWrap { get; set; }
+
     /// <summary>У левой верхней ячейки объединения: сколько строк ниже неё входит в объединение.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int ExtraRows { get; set; }
@@ -53,6 +60,7 @@ public sealed class TableCell
         Runs = Runs.Select(r => r.Clone()).ToList(),
         HorizontalAlignment = HorizontalAlignment,
         VerticalAlignment = VerticalAlignment,
+        NoWrap = NoWrap,
         ExtraRows = ExtraRows,
         ExtraColumns = ExtraColumns,
     };

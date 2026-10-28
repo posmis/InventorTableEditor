@@ -14,8 +14,12 @@ public sealed record TextSegment(IReadOnlyList<TextRun> Runs, ScriptPosition Scr
 /// <summary>Строка текста ячейки. <see cref="BaselineMm"/> — базовая линия от верха таблицы.</summary>
 public sealed record TextLine(IReadOnlyList<TextSegment> Segments, double BaselineMm, double FontSizeMm);
 
-/// <summary>Ячейка с текстом. Координаты в мм от левого верхнего угла, Y вниз.</summary>
-public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height, IReadOnlyList<TextLine> Lines, HorizontalTextAlignment Alignment);
+/// <summary>
+/// Ячейка с текстом. Координаты в мм от левого верхнего угла, Y вниз. <see cref="Wrap"/> — текст переносится
+/// по словам; иначе строки только по Enter, а слишком длинные сжимаются.
+/// </summary>
+public sealed record CellText(int Row, int Column, double Left, double Top, double Width, double Height,
+    IReadOnlyList<TextLine> Lines, HorizontalTextAlignment Alignment, bool Wrap = true);
 
 /// <summary>
 /// Геометрия таблицы для вывода в чертёж: границы столбцов и строк, линии и тексты.
@@ -52,6 +56,16 @@ public sealed class TableLayout
     {
         var edges = Build(model, metrics).RowEdges;
         return edges[row + 1] - edges[row];
+    }
+
+    /// <summary>
+    /// Ширина, по которой переносится текст ячейки: доступная ширина (без отступов), делённая на предел
+    /// сжатия — строка сначала сжимается до предела и только потом переносится.
+    /// </summary>
+    public static double WrapWidth(double cellWidthMm, TableStyle style)
+    {
+        var limit = style.MinScaleBeforeWrap is > 0 and <= 1 ? style.MinScaleBeforeWrap : 1;
+        return (cellWidthMm - 2 * style.PaddingMm) / limit;
     }
 
     /// <summary>Размер шрифта фрагмента в чертеже, мм (индексы уменьшены).</summary>
@@ -160,7 +174,8 @@ public sealed class TableLayout
                     continue;
 
                 var width = columnEdges[span.Right + 1] - columnEdges[span.Left];
-                anchors.Add((span, TextWrapper.Wrap(model.Cells[r][c], style, width - 2 * style.PaddingMm, metrics)));
+                var cell = model.Cells[r][c];
+                anchors.Add((span, TextWrapper.Wrap(cell, style, WrapWidth(width, style), cell.NoWrap ? null : metrics)));
             }
         }
 
@@ -193,7 +208,7 @@ public sealed class TableLayout
             var left = columnEdges[span.Left];
             texts.Add(new CellText(span.Top, span.Left, left, top, columnEdges[span.Right + 1] - left, cellHeight,
                 LayoutLines(lines, style, top, cellHeight, model.GetVerticalAlignment(span.Top, span.Left)),
-                model.GetHorizontalAlignment(span.Top, span.Left)));
+                model.GetHorizontalAlignment(span.Top, span.Left), !cell.NoWrap));
         }
 
         return new TableLayout(columnEdges, rowEdges, GridLines(model, spans, columnEdges, rowEdges), texts);

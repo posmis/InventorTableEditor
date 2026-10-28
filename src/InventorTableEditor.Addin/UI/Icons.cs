@@ -36,6 +36,19 @@ internal static class Icons
     public static UIElement Row(int row, Badge badge) =>
         Table(new Rect(1.5, 2.5 + row * 3.67, 13, 3.67), badge);
 
+    /// <summary>Переносить текст: строка, которая заворачивает на следующую (как значок Excel).</summary>
+    public static UIElement WrapText()
+    {
+        var drawing = new DrawingGroup();
+        Line(drawing, Ink, 1.5, new Point(2, 3.5), new Point(14, 3.5));
+        var pen = new Pen(Accent, 1.5) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+        drawing.Children.Add(new GeometryDrawing(null, pen, Geometry.Parse("M2,7.5 H11.5 A2,2 0 0 1 11.5,11.5 H7.5")));
+        Line(drawing, Accent, 1.5, new Point(7.5, 11.5), new Point(9.3, 9.8));
+        Line(drawing, Accent, 1.5, new Point(7.5, 11.5), new Point(9.3, 13.2));
+        Line(drawing, Ink, 1.5, new Point(2, 11.5), new Point(4.5, 11.5));
+        return Image(drawing);
+    }
+
     /// <summary>Объединить ячейки: две ячейки сливаются в одну (синяя), стрелки навстречу друг другу.</summary>
     public static UIElement Merge()
     {
