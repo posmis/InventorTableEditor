@@ -32,7 +32,8 @@ internal sealed class TableCommands
                 return;
             }
 
-            var editor = new TableEditorWindow(TableModel.CreateEmpty(3, 3), isNew: true);
+            // Новая таблица — по настройкам пользователя (оформление, число строк и столбцов).
+            var editor = new TableEditorWindow(UserSettingsFile.Load().CreateTable(), isNew: true);
             if (!ShowDialog(editor))
                 return;
 

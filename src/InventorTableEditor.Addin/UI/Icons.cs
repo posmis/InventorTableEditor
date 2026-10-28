@@ -146,6 +146,21 @@ internal static class Icons
         return canvas;
     }
 
+    /// <summary>Настройки: шестерёнка с восемью зубцами.</summary>
+    public static UIElement Settings()
+    {
+        var drawing = new DrawingGroup();
+        for (var i = 0; i < 8; i++)
+        {
+            var tooth = new RectangleGeometry(new Rect(6.6, 0.8, 2.8, 3.6), 0.6, 0.6) { Transform = new RotateTransform(i * 45, 8, 8) };
+            drawing.Children.Add(new GeometryDrawing(Ink, null, tooth));
+        }
+
+        drawing.Children.Add(new GeometryDrawing(Ink, null, new EllipseGeometry(new Point(8, 8), 5.4, 5.4)));
+        drawing.Children.Add(new GeometryDrawing(Brushes.White, null, new EllipseGeometry(new Point(8, 8), 2.3, 2.3)));
+        return Image(drawing);
+    }
+
     private static UIElement Table(Rect highlight, Badge badge)
     {
         var drawing = new DrawingGroup();

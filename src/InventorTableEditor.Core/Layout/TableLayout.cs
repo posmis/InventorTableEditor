@@ -243,7 +243,7 @@ public sealed class TableLayout
         for (var r = 1; r < model.RowCount; r++)
         {
             var y = rowEdges[r];
-            var weight = model.HasHeader && r == 1 ? style.OuterLineMm : style.InnerLineMm;
+            var weight = model.HasHeader && r == 1 ? style.HeaderLineMm : style.InnerLineMm;
             var pieces = Enumerable.Range(0, model.ColumnCount)
                 .Where(c => spans[r - 1, c] != spans[r, c])
                 .Select(c => (From: columnEdges[c], To: columnEdges[c + 1]));

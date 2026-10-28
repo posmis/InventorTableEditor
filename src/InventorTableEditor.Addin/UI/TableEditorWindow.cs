@@ -87,8 +87,7 @@ internal sealed class TableEditorWindow : Window
     public TableEditorWindow(TableModel model, bool isNew)
     {
         _session = new TableSession(TableModel.FromJson(model.ToJson()), () => ActiveEditor?.Buffer.Caret ?? 0);
-        _metrics = new WpfTextMetrics(Model.Style);
-        EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName)?.EmPerCapHeight ?? 1.4;
+        UpdateMetrics();
 
         Resources.MergedDictionaries.Add(_theme);
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
@@ -209,10 +208,35 @@ internal sealed class TableEditorWindow : Window
         if (caret is not { } position)
             return;
 
-        _metrics = new WpfTextMetrics(Model.Style);
+        UpdateMetrics();
         RebuildGrid(focusEditor: false);
         if (ActiveEditor is { } editor)
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => editor.FocusAt(position)));
+    }
+
+    /// <summary>Метрики шрифта таблицы — после открытия, отмены и смены оформления.</summary>
+    [System.Diagnostics.CodeAnalysis.MemberNotNull(nameof(_metrics))]
+    private void UpdateMetrics()
+    {
+        _metrics = new WpfTextMetrics(Model.Style);
+        EditorFonts.EmPerTextHeight = FontMetrics.Get(Model.Style.FontName)?.EmPerCapHeight ?? 1.4;
+    }
+
+    // ---------- Настройки ----------
+
+    /// <summary>Окно настроек: оформление этой таблицы (один шаг отмены) и настройки для новых таблиц.</summary>
+    private void OpenSettings()
+    {
+        var window = new SettingsWindow(Model.Style, UserSettingsFile.Load()) { Owner = this };
+        if (window.ShowDialog() == true && _session.ApplyStyle(window.ResultStyle))
+        {
+            UpdateMetrics();
+            RebuildGrid();
+        }
+        else
+        {
+            FocusActiveEditor();
+        }
     }
 
     // ---------- Выделение ячеек ----------
@@ -696,6 +720,7 @@ internal sealed class TableEditorWindow : Window
         groups.Children.Add(RibbonGroup("Начертание", style));
         groups.Children.Add(RibbonGroup("Выравнивание", alignment));
         groups.Children.Add(RibbonGroup("Вставка", Row(SymbolsButton())));
+        groups.Children.Add(RibbonGroup("Таблица", Row(Flat(Icons.Settings(), "Настройки таблицы\nОформление, линии, индексы, перенос, настройки по умолчанию", OpenSettings))));
 
         return new Border
         {
@@ -1225,6 +1250,7 @@ internal sealed class TableEditorWindow : Window
         // Линии таблицы — как на чертеже: рамка и линия под заголовками толще разделителей.
         var outer = Math.Max(1, Model.Style.OuterLineMm * PxPerMm);
         var inner = Math.Max(0.5, Model.Style.InnerLineMm * PxPerMm);
+        var header = Math.Max(0.5, Model.Style.HeaderLineMm * PxPerMm);
 
         // Одна ячейка редактора на объединённую ячейку: она растянута на все свои строки и столбцы.
         for (var r = 0; r < Model.RowCount; r++)
@@ -1238,7 +1264,7 @@ internal sealed class TableEditorWindow : Window
                 var editor = CreateEditor(r, c);
                 _editors[(r, c)] = editor;
 
-                var bottom = span.Bottom == Model.RowCount - 1 || (Model.HasHeader && span.Bottom == 0) ? outer : inner;
+                var bottom = span.Bottom == Model.RowCount - 1 ? outer : Model.HasHeader && span.Bottom == 0 ? header : inner;
                 var right = span.Right == Model.ColumnCount - 1 ? outer : inner;
                 var border = new Border
                 {

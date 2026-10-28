@@ -382,6 +382,16 @@ public sealed class TableSession
     }
 
     /// <summary>Включает или выключает строку заголовков; текущей становится первая строка.</summary>
+    /// <summary>Оформление из окна настроек — один шаг отмены. false — ничего не изменилось.</summary>
+    public bool ApplyStyle(TableStyle style)
+    {
+        if (System.Text.Json.JsonSerializer.Serialize(style) == System.Text.Json.JsonSerializer.Serialize(Model.Style))
+            return false;
+
+        Change(() => Model.ApplyStyle(style));
+        return true;
+    }
+
     public void SetHeader(bool enabled)
     {
         if (enabled == Model.HasHeader)

@@ -338,12 +338,30 @@ public sealed class TableModel
 
     public bool IsHeaderRow(int row) => HasHeader && row == 0;
 
-    /// <summary>Выравнивание ячейки по горизонтали с учётом умолчаний: заголовки по центру, данные слева.</summary>
+    /// <summary>Выравнивание ячейки по горизонтали с учётом умолчаний таблицы (заголовки и данные отдельно).</summary>
     public HorizontalTextAlignment GetHorizontalAlignment(int row, int column) =>
-        Cells[row][column].HorizontalAlignment ?? (IsHeaderRow(row) ? HorizontalTextAlignment.Center : HorizontalTextAlignment.Left);
+        Cells[row][column].HorizontalAlignment ?? (IsHeaderRow(row) ? Style.HeaderAlignment : Style.DataAlignment);
 
     public VerticalTextAlignment GetVerticalAlignment(int row, int column) =>
-        Cells[row][column].VerticalAlignment ?? VerticalTextAlignment.Middle;
+        Cells[row][column].VerticalAlignment ?? Style.VerticalAlignment;
+
+    /// <summary>
+    /// Новое оформление таблицы (из окна настроек). Размеры строк и столбцов не меняются. Если изменён
+    /// наклон по умолчанию, текст с наклоном «по умолчанию» меняется вместе с ним; явно заданный — остаётся.
+    /// </summary>
+    public void ApplyStyle(TableStyle style)
+    {
+        var italicChanged = style.Italic != Style.Italic;
+        foreach (var run in Cells.SelectMany(row => row).SelectMany(cell => cell.Runs))
+        {
+            if (italicChanged && run.Italic == Style.Italic)
+                run.Italic = style.Italic;
+        }
+
+        Style = style.Clone();
+        foreach (var cell in Cells.SelectMany(row => row))
+            cell.Normalize();
+    }
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 
@@ -427,6 +445,12 @@ public sealed class TableModel
             throw new InvalidDataException("Повреждённые данные таблицы: недопустимые параметры оформления.");
         if (!(Style.MinScaleBeforeWrap > 0 && Style.MinScaleBeforeWrap <= 1))
             Style.MinScaleBeforeWrap = new TableStyle().MinScaleBeforeWrap;
+        var factory = new TableStyle();
+        if (!(Style.HeaderLineMm > 0) || !double.IsFinite(Style.HeaderLineMm))
+            Style.HeaderLineMm = Style.OuterLineMm;
+        if (!Enum.IsDefined(Style.HeaderAlignment)) Style.HeaderAlignment = factory.HeaderAlignment;
+        if (!Enum.IsDefined(Style.DataAlignment)) Style.DataAlignment = factory.DataAlignment;
+        if (!Enum.IsDefined(Style.VerticalAlignment)) Style.VerticalAlignment = factory.VerticalAlignment;
 
         foreach (var row in Cells)
         {
