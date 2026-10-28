@@ -91,7 +91,7 @@ internal static class TableRenderer
             {
                 var box = AddText(sketch, Point(geometry, 0, segment.BaselineMm), FormatSegment(segment, style), PlainText(segment));
                 box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
-                box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextLower;
+                box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
                 placed.Add((box, lineWidth, segment));
                 lineWidth += MeasureWidthMm(box, segment);
             }
@@ -105,15 +105,46 @@ internal static class TableRenderer
 
             foreach (var (box, offset, segment) in placed)
             {
-                // Низ надписи лежит чуть ниже базовой линии — на величину нижних выносных элементов.
+                // Origin надписи Inventor — её левый верхний угол. Низ надписи должен лежать
+                // чуть ниже базовой линии (на нижние выносные элементы), поэтому верх = низ − высота надписи.
                 var bottom = segment.BaselineMm + DescentRatio * segment.FontSizeMm;
-                box.Origin = Point(geometry, left + offset, bottom);
+                box.Origin = Point(geometry, left + offset, bottom - MeasureHeightMm(box, segment));
             }
         }
     }
 
     /// <summary>Доля высоты шрифта, на которую низ надписи Inventor опущен ниже базовой линии.</summary>
     private const double DescentRatio = 0.2;
+
+    /// <summary>Высота надписи в мм; при неудаче — оценка по размеру шрифта.</summary>
+    private static double MeasureHeightMm(Inventor.TextBox box, TextSegment segment)
+    {
+        try
+        {
+            double height = ((dynamic)box).Height;
+            if (height > 0)
+                return Units.CmToMm(height);
+        }
+        catch (Exception)
+        {
+            // Нет свойства Height — пробуем габарит.
+        }
+
+        try
+        {
+            Box2d range = ((dynamic)box).RangeBox;
+            var height = range.MaxPoint.Y - range.MinPoint.Y;
+            if (height > 0)
+                return Units.CmToMm(height);
+        }
+        catch (Exception)
+        {
+            // Нет и габарита — оценка ниже.
+        }
+
+        AddinLog.Write("Не удалось измерить высоту надписи, используется оценка.");
+        return segment.FontSizeMm * (1 + DescentRatio);
+    }
 
     /// <summary>
     /// Ширина надписи в мм. Сначала спрашиваем Inventor, при неудаче — грубая оценка по числу символов.
