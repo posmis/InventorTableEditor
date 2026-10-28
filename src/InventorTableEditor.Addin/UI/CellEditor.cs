@@ -26,7 +26,12 @@ internal sealed class CellEditor : FrameworkElement
     private readonly Pen _focusPen;
     private readonly DispatcherTimer _blink = new() { Interval = TimeSpan.FromMilliseconds(530) };
     /// <summary>Подсветка выделенных ячеек — полупрозрачный голубой поверх текста, как в Excel.</summary>
-    private static readonly Brush RangeBrush = CreateRangeBrush();
+    private static readonly Brush RangeBrush = Frozen(Color.FromArgb(0x40, 0x06, 0x96, 0xD7));
+
+    private static readonly Brush SelectionBrush = Frozen(Color.FromArgb(0x60, 0x33, 0x99, 0xFF));
+
+    /// <summary>Выделение, пока фокус на ленте: серое, как в Word.</summary>
+    private static readonly Brush InactiveSelectionBrush = Frozen(Color.FromArgb(0x50, 0x80, 0x80, 0x80));
 
     /// <summary>Толщина обводки жирного текста в долях кегля.</summary>
     private const double BoldStroke = 0.035;
@@ -36,6 +41,7 @@ internal sealed class CellEditor : FrameworkElement
     private CaretMap? _caretMap;
     private bool _caretVisible;
     private bool _inRange;
+    private bool _isCurrent;
     private bool _selecting;
 
     public CellEditor(TableCell cell, TableStyle style, double pxPerMm, Brush background, Brush accent)
@@ -93,6 +99,22 @@ internal sealed class CellEditor : FrameworkElement
             if (_inRange == value)
                 return;
             _inRange = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Текущая ячейка таблицы. Выделение текста показывается только в ней (как в Word и Excel):
+    /// ярко — пока в ячейке курсор, серым — пока фокус на ленте (например, в списке шрифтов).
+    /// </summary>
+    public bool IsCurrent
+    {
+        get => _isCurrent;
+        set
+        {
+            if (_isCurrent == value)
+                return;
+            _isCurrent = value;
             InvalidateVisual();
         }
     }
@@ -424,10 +446,10 @@ internal sealed class CellEditor : FrameworkElement
 
     private void DrawSelection(DrawingContext context)
     {
-        if (!Buffer.HasSelection || _caretMap == null)
+        if (!Buffer.HasSelection || _caretMap == null || !_isCurrent)
             return;
 
-        var brush = new SolidColorBrush(Color.FromArgb(0x60, 0x33, 0x99, 0xFF));
+        var brush = IsKeyboardFocused ? SelectionBrush : InactiveSelectionBrush;
         var text = Buffer.Text;
         foreach (var line in _caretMap.Lines)
         {
@@ -474,9 +496,9 @@ internal sealed class CellEditor : FrameworkElement
             ? Buffer.Caret
             : _caretMap.HitTest(point.X / _pxPerMm + _layout.Left, point.Y / _pxPerMm + _layout.Top);
 
-    private static Brush CreateRangeBrush()
+    private static Brush Frozen(Color color)
     {
-        var brush = new SolidColorBrush(Color.FromArgb(0x40, 0x06, 0x96, 0xD7));
+        var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
     }

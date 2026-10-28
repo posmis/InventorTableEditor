@@ -774,6 +774,8 @@ internal sealed class TableEditorWindow : Window
         editor.GotKeyboardFocus += (_, _) =>
         {
             _session.MoveTo(row, column);
+            foreach (var other in _editors.Values)
+                other.IsCurrent = ReferenceEquals(other, editor);
             UpdateSizeBoxes();
             SyncFormatBar();
         };
