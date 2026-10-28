@@ -17,17 +17,17 @@ internal sealed class TextStyleCache
 
     private readonly DrawingDocument _document;
     private readonly Dictionary<string, TextStyle> _styles = new();
-    private readonly Dictionary<string, double> _widthScales = new();
 
     public TextStyleCache(DrawingDocument document)
     {
         _document = document;
     }
 
-    public TextStyle Get(string font, double sizeMm, bool bold, bool italic, bool underline)
+    /// <param name="widthScale">Сжатие по ширине (1 — без сжатия) для строк, которые не помещаются в ячейку.</param>
+    public TextStyle Get(string font, double sizeMm, bool bold, bool italic, bool underline, double widthScale)
     {
         var name = string.Create(CultureInfo.InvariantCulture,
-            $"{Prefix} {font} {sizeMm:0.###}{(bold ? " Ж" : string.Empty)}{(italic ? " К" : string.Empty)}{(underline ? " Ч" : string.Empty)}");
+            $"{Prefix} {font} {sizeMm:0.###}{(bold ? " Ж" : string.Empty)}{(italic ? " К" : string.Empty)}{(underline ? " Ч" : string.Empty)}{(widthScale < 1 ? $" ш{widthScale:0.##}" : string.Empty)}");
         if (_styles.TryGetValue(name, out var cached))
             return cached;
 
@@ -39,32 +39,12 @@ internal sealed class TextStyleCache
         style.Italic = italic;
         style.Underline = underline;
 
-        // Стиль примечаний ЕСКД может растягивать текст по ширине. Inventor при этом сообщает
-        // ширину надписи без растяжения, и фрагменты строки налезают друг на друга.
-        TrySet(name, "WidthScale", () => ((dynamic)style).WidthScale = 1.0);
-        _widthScales[name] = ReadWidthScale(style);
+        // Стиль примечаний ЕСКД может растягивать текст по ширине, а расстановка считается
+        // по метрикам шрифта без растяжения. Поэтому коэффициент ширины задаётся явно.
+        TrySet(name, "WidthScale", () => ((dynamic)style).WidthScale = widthScale);
 
         _styles[name] = style;
         return style;
-    }
-
-    /// <summary>
-    /// Во сколько раз текст стиля шире, чем сообщает Inventor (растяжение по ширине, если его не удалось убрать).
-    /// </summary>
-    public double WidthScale(TextStyle style) =>
-        _widthScales.TryGetValue(style.Name, out var scale) ? scale : 1.0;
-
-    private static double ReadWidthScale(TextStyle style)
-    {
-        try
-        {
-            double scale = ((dynamic)style).WidthScale;
-            return scale > 0 ? scale : 1.0;
-        }
-        catch (Exception)
-        {
-            return 1.0;
-        }
     }
 
     private static void TrySet(string styleName, string property, Action action)

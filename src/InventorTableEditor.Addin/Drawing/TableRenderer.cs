@@ -7,7 +7,7 @@ using InventorTableEditor.Core.Layout;
 using InventorTableEditor.Core.Model;
 using CellText = InventorTableEditor.Core.Layout.CellText;
 using HorizontalTextAlignment = InventorTableEditor.Core.Model.HorizontalTextAlignment;
-using TextSegment = InventorTableEditor.Core.Layout.TextSegment;
+using TextLine = InventorTableEditor.Core.Layout.TextLine;
 using TableStyle = InventorTableEditor.Core.Model.TableStyle;
 
 namespace InventorTableEditor.Addin.Drawing;
@@ -71,19 +71,17 @@ internal static class TableRenderer
         {
             foreach (var line in cell.Lines)
             {
-                foreach (var segment in line.Segments)
-                {
-                    foreach (var run in segment.Runs)
-                        StyleFor(styles, run, style);
-                }
+                var plan = PlanLine(line, style, cell.Width - 2 * style.PaddingMm);
+                foreach (var item in plan.Runs)
+                    StyleFor(styles, item.Run, style, plan.WidthScale);
             }
         }
 
         return styles;
     }
 
-    private static TextStyle StyleFor(TextStyleCache styles, TextRun run, TableStyle style) =>
-        styles.Get(run.FontName ?? style.FontName, TableLayout.RenderedSize(run, style), run.Bold, run.Italic, run.Underline);
+    private static TextStyle StyleFor(TextStyleCache styles, TextRun run, TableStyle style, double widthScale) =>
+        styles.Get(run.FontName ?? style.FontName, TableLayout.RenderedSize(run, style), run.Bold, run.Italic, run.Underline, widthScale);
 
     private static void DrawLayout(DrawingSketch sketch, TableModel model, TableLayout layout, TextStyleCache styles, TransientGeometry geometry)
     {
@@ -103,83 +101,97 @@ internal static class TableRenderer
             DrawCellText(sketch, cell, model.Style, styles, geometry);
     }
 
+    /// <summary>Фрагмент строки: левый край надписи от начала строки и верх букв от верха таблицы, мм (до сжатия).</summary>
+    private sealed record PlannedRun(TextRun Run, double LeftMm, double TopMm);
+
+    /// <summary>Расстановка строки: фрагменты, габарит по горизонтали и коэффициент сжатия по ширине.</summary>
+    private sealed record LinePlan(List<PlannedRun> Runs, double LeftMm, double RightMm, double WidthScale)
+    {
+        public double WidthMm => (RightMm - LeftMm) * WidthScale;
+    }
+
+    /// <summary>
+    /// Расставляет фрагменты строки по метрикам шрифта. Фрагменты идут по ширинам букв, как в Word,
+    /// а на стыке наклонного текста с прямым и перед верхним индексом добавляется поправка на наклон
+    /// (правила — docs/typography.md). Если строка шире ячейки (длинное слово не переносится),
+    /// она сжимается по ширине: высота букв не меняется.
+    /// </summary>
+    private static LinePlan PlanLine(TextLine line, TableStyle style, double availableMm)
+    {
+        var runs = new List<PlannedRun>();
+        double pen = 0, left = double.PositiveInfinity, right = double.NegativeInfinity;
+        TextRun? previous = null;
+        var previousOverhang = 0.0;
+
+        foreach (var segment in line.Segments)
+        {
+            foreach (var run in segment.Runs)
+            {
+                var extents = Measure(run, style);
+                if (previous != null && NeedsItalicCorrection(previous, run))
+                    pen += previousOverhang;
+
+                previous = run;
+                previousOverhang = extents.OverhangMm;
+                if (!string.IsNullOrWhiteSpace(run.Text))
+                {
+                    runs.Add(new PlannedRun(run, pen + extents.BoxLeftMm, segment.BaselineMm - extents.TopMm));
+                    left = Math.Min(left, pen + extents.BoxLeftMm);
+                    right = Math.Max(right, pen + extents.AdvanceMm + extents.OverhangMm);
+                }
+
+                pen += extents.AdvanceMm;
+            }
+        }
+
+        if (runs.Count == 0)
+            return new LinePlan(runs, 0, 0, 1);
+
+        var width = right - left;
+        var scale = width > availableMm && availableMm > 0
+            ? Math.Max(0.1, Math.Floor(availableMm / width * 100) / 100)
+            : 1.0;
+        return new LinePlan(runs, left, right, scale);
+    }
+
+    /// <summary>Размеры фрагмента по метрикам шрифта; если шрифт не найден в Windows — грубая оценка.</summary>
+    private static TextExtents Measure(TextRun run, TableStyle style)
+    {
+        var size = TableLayout.RenderedSize(run, style);
+        var metrics = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic);
+        return metrics?.Measure(run.Text, size, run.Italic) ?? new TextExtents(size, 0, run.Text.Length * size * 0.6, 0);
+    }
+
     /// <summary>
     /// Выводит текст ячейки. Каждая строка — цепочка надписей (по одной на фрагмент с единым
-    /// форматированием). Фрагменты ставятся по ширинам букв из метрик шрифта, как в Word, а на стыке
-    /// наклонного текста с прямым или с верхним индексом добавляется поправка на наклон (правила —
-    /// docs/typography.md). Надпись Inventor — прямоугольник от левого края букв до конца текста,
-    /// по высоте — по очертаниям букв; её Origin — левый верхний угол.
-    /// После расстановки строка целиком сдвигается по выравниванию ячейки.
+    /// форматированием), расставленных <see cref="PlanLine"/>. Надпись Inventor — прямоугольник
+    /// от левого края букв до конца текста, по высоте — по очертаниям букв; её Origin — левый верхний угол.
+    /// Строка целиком сдвигается по выравниванию ячейки.
     /// </summary>
     private static void DrawCellText(DrawingSketch sketch, CellText cell, TableStyle style, TextStyleCache styles, TransientGeometry geometry)
     {
         foreach (var line in cell.Lines)
         {
-            // Надпись, её левый край от начала строки и верх от верха таблицы, мм.
-            var placed = new List<(Inventor.TextBox Box, double LeftMm, double TopMm)>();
-            double pen = 0, lineLeft = double.PositiveInfinity, lineRight = double.NegativeInfinity;
-            TextRun? previous = null;
-            var previousOverhang = 0.0;
-
-            foreach (var segment in line.Segments)
-            {
-                foreach (var run in segment.Runs)
-                {
-                    var size = TableLayout.RenderedSize(run, style);
-                    var extents = FontMetrics.Get(run.FontName ?? style.FontName, run.Bold, run.Italic)?.Measure(run.Text, size, run.Italic);
-                    if (previous != null && NeedsItalicCorrection(previous, run))
-                        pen += previousOverhang;
-
-                    previous = run;
-                    previousOverhang = extents?.OverhangMm ?? 0;
-                    if (string.IsNullOrWhiteSpace(run.Text))
-                    {
-                        pen += extents?.AdvanceMm ?? run.Text.Length * size * 0.4;
-                        continue;
-                    }
-
-                    var textStyle = StyleFor(styles, run, style);
-                    var box = sketch.TextBoxes.AddFitted(Point(geometry, 0, segment.BaselineMm), EscapeText(run.Text), textStyle);
-                    box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
-                    box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
-
-                    double boxLeft, advance, right, top;
-                    if (extents is { } known)
-                    {
-                        boxLeft = pen + known.BoxLeftMm;
-                        advance = known.AdvanceMm;
-                        right = pen + known.AdvanceMm + known.OverhangMm;
-                        top = segment.BaselineMm - known.TopMm;
-                    }
-                    else
-                    {
-                        // Шрифт не найден в Windows: ширина и высота — как сообщает Inventor.
-                        advance = MeasureWidthMm(box, run.Text, size) * styles.WidthScale(textStyle);
-                        boxLeft = pen;
-                        right = pen + advance;
-                        top = segment.BaselineMm - MeasureHeightMm(box, size);
-                    }
-
-                    placed.Add((box, boxLeft, top));
-                    lineLeft = Math.Min(lineLeft, boxLeft);
-                    lineRight = Math.Max(lineRight, right);
-                    pen += advance;
-                }
-            }
-
-            if (placed.Count == 0)
+            var plan = PlanLine(line, style, cell.Width - 2 * style.PaddingMm);
+            if (plan.Runs.Count == 0)
                 continue;
 
-            var lineWidth = lineRight - lineLeft;
             var left = cell.Alignment switch
             {
-                HorizontalTextAlignment.Center => cell.Left + (cell.Width - lineWidth) / 2,
-                HorizontalTextAlignment.Right => cell.Left + cell.Width - style.PaddingMm - lineWidth,
+                HorizontalTextAlignment.Center => cell.Left + (cell.Width - plan.WidthMm) / 2,
+                HorizontalTextAlignment.Right => cell.Left + cell.Width - style.PaddingMm - plan.WidthMm,
                 _ => cell.Left + style.PaddingMm,
             };
 
-            foreach (var (box, boxLeft, top) in placed)
-                box.Origin = Point(geometry, left + boxLeft - lineLeft, top);
+            foreach (var item in plan.Runs)
+            {
+                var origin = Point(geometry, left + (item.LeftMm - plan.LeftMm) * plan.WidthScale, item.TopMm);
+                var box = sketch.TextBoxes.AddFitted(origin, EscapeText(item.Run.Text), StyleFor(styles, item.Run, style, plan.WidthScale));
+                box.HorizontalJustification = HorizontalTextAlignmentEnum.kAlignTextLeft;
+                box.VerticalJustification = VerticalTextAlignmentEnum.kAlignTextUpper;
+                // После смены выравнивания точка привязки задаётся заново.
+                box.Origin = origin;
+            }
         }
     }
 
@@ -195,68 +207,6 @@ internal static class TableRenderer
 
     /// <summary>Текст надписи Inventor разбирается как разметка: экранируются только &amp;, &lt; и &gt;.</summary>
     private static string EscapeText(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-
-    /// <summary>Высота надписи в мм; при неудаче — оценка по размеру шрифта.</summary>
-    private static double MeasureHeightMm(Inventor.TextBox box, double sizeMm)
-    {
-        try
-        {
-            double height = ((dynamic)box).Height;
-            if (height > 0)
-                return Units.CmToMm(height);
-        }
-        catch (Exception)
-        {
-            // Нет свойства Height — пробуем габарит.
-        }
-
-        try
-        {
-            Box2d range = ((dynamic)box).RangeBox;
-            var height = range.MaxPoint.Y - range.MinPoint.Y;
-            if (height > 0)
-                return Units.CmToMm(height);
-        }
-        catch (Exception)
-        {
-            // Нет и габарита — оценка ниже.
-        }
-
-        AddinLog.Write("Не удалось измерить высоту надписи, используется оценка.");
-        return sizeMm;
-    }
-
-    /// <summary>
-    /// Ширина надписи в мм. Сначала спрашиваем Inventor, при неудаче — грубая оценка по числу символов.
-    /// </summary>
-    private static double MeasureWidthMm(Inventor.TextBox box, string text, double sizeMm)
-    {
-        try
-        {
-            double width = ((dynamic)box).Width;
-            if (width > 0)
-                return Units.CmToMm(width);
-        }
-        catch (Exception)
-        {
-            // Нет свойства Width — пробуем габарит.
-        }
-
-        try
-        {
-            Box2d range = ((dynamic)box).RangeBox;
-            var width = range.MaxPoint.X - range.MinPoint.X;
-            if (width > 0)
-                return Units.CmToMm(width);
-        }
-        catch (Exception)
-        {
-            // Нет и габарита — оценка ниже.
-        }
-
-        AddinLog.Write("Не удалось измерить ширину надписи, используется оценка.");
-        return text.Length * sizeMm * 0.75;
-    }
 
     /// <summary>Точка эскиза: мм с осью Y вниз → см Inventor с осью Y вверх.</summary>
     private static Point2d Point(TransientGeometry geometry, double xMm, double yMm) =>
