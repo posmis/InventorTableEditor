@@ -1,4 +1,5 @@
 using System.Text;
+using InventorTableEditor.Core.IO;
 using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Core.Templates;
@@ -87,10 +88,7 @@ public sealed class TemplateLibrary
 
         var copy = TableModel.FromJson(model.ToJson());
         copy.Editor = null;
-        System.IO.Directory.CreateDirectory(Directory);
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, copy.ToJson(), new UTF8Encoding(false));
-        File.Move(temporary, path, overwrite: true);
+        AtomicFile.WriteAllText(path, copy.ToJson());
         // Тот же шаблон с именем в другом регистре (на диске с учётом регистра) — старый файл не нужен.
         if (existing?.FilePath is { } oldPath && oldPath != path && File.Exists(oldPath))
             File.Delete(oldPath);

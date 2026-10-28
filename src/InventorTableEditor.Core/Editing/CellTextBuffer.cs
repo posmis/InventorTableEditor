@@ -4,16 +4,14 @@ namespace InventorTableEditor.Core.Editing;
 
 /// <summary>
 /// Текст ячейки для редактирования: символы с форматом каждого, курсор, выделение,
-/// формат для набираемого текста и история отмены. Без зависимостей от WPF.
+/// формат для набираемого текста. Без зависимостей от WPF. Отмена — общая для таблицы (<see cref="TableHistory"/>).
 /// Индексы — позиции между символами (0 — перед первым).
 /// </summary>
 public sealed class CellTextBuffer
 {
     private readonly TableStyle _style;
-    private readonly Stack<Snapshot> _undo = new();
-    private readonly Stack<Snapshot> _redo = new();
-    private List<char> _chars = new();
-    private List<TextRun> _formats = new();
+    private readonly List<char> _chars = new();
+    private readonly List<TextRun> _formats = new();
 
     public CellTextBuffer(TableCell cell, TableStyle style)
     {
@@ -116,7 +114,6 @@ public sealed class CellTextBuffer
         if (text.Length == 0 && !HasSelection)
             return;
 
-        SaveUndo();
         var format = TypingFormat;
         RemoveSelection();
         _chars.InsertRange(Caret, text);
@@ -155,7 +152,6 @@ public sealed class CellTextBuffer
             return;
         }
 
-        SaveUndo();
         var typing = TypingFormat;
         RemoveSelection();
         foreach (var run in pasted)
@@ -184,7 +180,6 @@ public sealed class CellTextBuffer
         if (Caret == 0)
             return;
 
-        SaveUndo();
         Caret--;
         Anchor = Caret;
         _chars.RemoveAt(Caret);
@@ -203,7 +198,6 @@ public sealed class CellTextBuffer
         if (Caret == _chars.Count)
             return;
 
-        SaveUndo();
         _chars.RemoveAt(Caret);
         _formats.RemoveAt(Caret);
         TypingFormat = FormatAt(Caret);
@@ -214,7 +208,6 @@ public sealed class CellTextBuffer
         if (!HasSelection)
             return;
 
-        SaveUndo();
         RemoveSelection();
         TypingFormat = FormatAt(Caret);
     }
@@ -261,10 +254,6 @@ public sealed class CellTextBuffer
     /// <summary>Есть ли в ячейке видимый текст (не только пробелы и переносы).</summary>
     public bool HasText => _chars.Any(ch => !char.IsWhiteSpace(ch));
 
-    public bool Undo() => Restore(_undo, _redo);
-
-    public bool Redo() => Restore(_redo, _undo);
-
     /// <summary>Формат по позиции: символа перед ней, а в начале строки — символа после неё.</summary>
     private TextRun FormatAt(int index)
     {
@@ -294,7 +283,6 @@ public sealed class CellTextBuffer
             return;
         }
 
-        SaveUndo();
         // Символы с одинаковым форматом получают одинаковый новый формат.
         var changed = new Dictionary<TextRun, TextRun>(ReferenceEqualityComparer.Instance);
         for (var i = SelectionStart; i < SelectionEnd; i++)
@@ -320,27 +308,4 @@ public sealed class CellTextBuffer
         _formats.RemoveRange(start, count);
         Caret = Anchor = start;
     }
-
-    private void SaveUndo()
-    {
-        _undo.Push(new Snapshot(new List<char>(_chars), new List<TextRun>(_formats), Caret, Anchor));
-        _redo.Clear();
-    }
-
-    private bool Restore(Stack<Snapshot> from, Stack<Snapshot> to)
-    {
-        if (from.Count == 0)
-            return false;
-
-        to.Push(new Snapshot(new List<char>(_chars), new List<TextRun>(_formats), Caret, Anchor));
-        var snapshot = from.Pop();
-        _chars = snapshot.Chars;
-        _formats = snapshot.Formats;
-        Caret = snapshot.Caret;
-        Anchor = snapshot.Anchor;
-        TypingFormat = FormatAt(Caret);
-        return true;
-    }
-
-    private sealed record Snapshot(List<char> Chars, List<TextRun> Formats, int Caret, int Anchor);
 }

@@ -14,16 +14,10 @@ internal sealed class NameDialog : Window
     public NameDialog(string title, string prompt, string initial, Func<string, string?> check)
     {
         _check = check;
-        var theme = ThemeLoader.Load();
-        Resources.MergedDictionaries.Add(theme);
+        var theme = ThemeLoader.ApplyTo(this);
         Title = title;
         SizeToContent = SizeToContent.WidthAndHeight;
         ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        ShowInTaskbar = false;
-        FontFamily = new FontFamily("Segoe UI");
-        FontSize = 12;
-        Background = (Brush)theme["WindowBrush"];
 
         _box.Style = (Style)theme["FieldBox"];
         _box.Text = initial;

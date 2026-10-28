@@ -206,4 +206,57 @@ public class TemplateTests : IDisposable
         Assert.Equal("mine", session.Model.GetText(0, 0));
         Assert.Equal(2, session.Model.RowCount);
     }
+
+    [Fact]
+    public void BuiltIn_UnknownNameThrows()
+    {
+        Assert.Throws<ArgumentException>(() => BuiltInTemplates.Create("нет такого"));
+    }
+
+    [Fact]
+    public void Exists_IgnoresCaseAndSpaces()
+    {
+        Library.Save("Моя", Sample());
+
+        Assert.True(Library.Exists(" моя "));
+        Assert.True(Library.Exists(BuiltInTemplates.Gear.ToLowerInvariant()));
+        Assert.False(Library.Exists("другая"));
+    }
+
+    [Fact]
+    public void Save_InvalidNameThrows()
+    {
+        Assert.Throws<ArgumentException>(() => Library.Save("a/b", Sample()));
+        Assert.False(Directory.Exists(_directory));
+    }
+
+    [Fact]
+    public void List_WithoutFolder_OnlyBuiltIns()
+    {
+        Assert.Equal(BuiltInTemplates.Names.Count, Library.List().Count);
+    }
+
+    [Fact]
+    public void Overwrite_WithDifferentCase_KeepsOneTemplate()
+    {
+        Library.Save("abc", Sample());
+
+        Library.Save("ABC", Sample(), overwrite: true);
+
+        Assert.Equal(new[] { "ABC" }, Library.List().Where(t => !t.BuiltIn).Select(t => t.Name));
+    }
+
+    [Fact]
+    public void BuiltIns_FitDefaultPaddingAndRowHeight()
+    {
+        foreach (var name in BuiltInTemplates.Names)
+        {
+            var model = BuiltInTemplates.Create(name);
+            var layout = TableLayout.Build(model, FixedMetrics.Instance);
+            // С переносом длинных наименований строки могут вырасти, но не уменьшиться.
+            for (var r = 0; r < model.RowCount; r++)
+                Assert.True(layout.RowEdges[r + 1] - layout.RowEdges[r] >= 8 - 1e-9);
+            Assert.Empty(model.Style.Check());
+        }
+    }
 }

@@ -163,7 +163,6 @@ public class TableModelTests
     [InlineData("""{"ColumnWidths":[0],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""")]
     [InlineData("""{"ColumnWidths":[20],"RowHeights":[-1],"Cells":[[{"Runs":[]}]]}""")]
     [InlineData("""{"ColumnWidths":[20],"RowHeights":[8],"Cells":[]}""")]
-    [InlineData("""{"Style":{"FontSizeMm":0},"ColumnWidths":[20],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""")]
     public void FromJson_RejectsBrokenTables(string json)
     {
         Assert.Throws<InvalidDataException>(() => TableModel.FromJson(json));

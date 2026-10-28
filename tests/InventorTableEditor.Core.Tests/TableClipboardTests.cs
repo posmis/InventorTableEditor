@@ -276,4 +276,110 @@ public class TableClipboardTests
 
     private static int CountOf(string text, string part) =>
         (text.Length - text.Replace(part, "").Length) / part.Length;
+
+    // ---------- Дополнительные случаи ----------
+
+    [Fact]
+    public void ToTsv_SingleCellIsPlainText()
+    {
+        Assert.Equal("11", TableClipboard.ToTsv(Table(), new CellRange(1, 1, 1, 1)));
+    }
+
+    [Fact]
+    public void ToHtmlTable_EscapesTextAndKeepsEmptyCells()
+    {
+        var model = Table(1, 2);
+        model.SetText(0, 0, "<a & b>");
+        model.SetText(0, 1, "");
+
+        Assert.Equal("<table border=\"1\" style=\"border-collapse:collapse\"><tr><td><i>&lt;a &amp; b&gt;</i></td><td></td></tr></table>",
+            TableClipboard.ToHtmlTable(model, new CellRange(0, 0, 0, 1)));
+    }
+
+    [Fact]
+    public void ToHtmlTable_RangeInsideMergeStartsAtAnchor()
+    {
+        var model = Table();
+        model.Merge(new CellRange(0, 0, 2, 0));
+
+        var html = TableClipboard.ToHtmlTable(model, new CellRange(0, 0, 1, 1));
+
+        Assert.Contains("<td rowspan=\"2\">", html);
+    }
+
+    [Fact]
+    public void FromHtml_CellStyleAppliesToWholeCell()
+    {
+        const string html = "<table><tr><td style=\"font-weight:bold;vertical-align:middle\">A<sub>1</sub></td>"
+                            + "<td style='text-decoration:underline'>u</td></tr></table>";
+
+        var row = TableClipboard.FromHtml(html, italic: false)[0];
+
+        Assert.All(row[0].Runs, r => Assert.True(r.Bold));
+        Assert.Equal(ScriptPosition.Normal, row[0].Runs[0].Script);
+        Assert.Equal(ScriptPosition.Subscript, row[0].Runs[1].Script);
+        Assert.True(row[1].Runs.Single().Underline);
+    }
+
+    [Fact]
+    public void FromHtml_UppercaseTagsAndNumericEntities()
+    {
+        const string html = "<TABLE><TR><TD><B>x</B>&#178;&#x2300;</TD></TR></TABLE>";
+
+        var cell = TableClipboard.FromHtml(html, italic: false)[0][0];
+
+        Assert.Equal("x²⌀", cell.PlainText);
+        Assert.True(cell.Runs[0].Bold);
+        Assert.False(cell.Runs[1].Bold);
+    }
+
+    [Fact]
+    public void FromHtml_NestedFormatsCloseCorrectly()
+    {
+        var runs = TableClipboard.ParseCell("<b>a<i>b<u>c</u>d</i>e</b>f", italic: false).Runs;
+
+        Assert.Equal(new[] { "a", "b", "c", "d", "e", "f" }, runs.Select(r => r.Text));
+        Assert.Equal(new[] { true, true, true, true, true, false }, runs.Select(r => r.Bold));
+        Assert.Equal(new[] { false, true, true, true, false, false }, runs.Select(r => r.Italic));
+        Assert.Equal(new[] { false, false, true, false, false, false }, runs.Select(r => r.Underline));
+    }
+
+    [Fact]
+    public void FromHtml_TableDefaultItalicCannotBeTurnedOffByMarkup()
+    {
+        var run = TableClipboard.ParseCell("<span style=\"font-style:normal\">a</span>", italic: true).Runs.Single();
+
+        Assert.True(run.Italic);
+    }
+
+    [Fact]
+    public void FromHtml_EmptyTableCellsKeepPositions()
+    {
+        var rows = TableClipboard.FromHtml("<table><tr><td></td><td>b</td></tr><tr><td>c</td><td></td></tr></table>", italic: false);
+
+        Assert.Equal(new[] { new[] { "", "b" }, new[] { "c", "" } }, Texts(rows));
+    }
+
+    [Fact]
+    public void FromHtml_ListItemsBecomeLines()
+    {
+        var cell = TableClipboard.ParseCell("<ul><li>one</li><li>two</li></ul>", italic: false);
+
+        Assert.Equal("one\ntwo", cell.PlainText);
+    }
+
+    [Fact]
+    public void FromTsv_SingleTrailingNewlineIgnoredButBlankRowsKept()
+    {
+        Assert.Single(TableClipboard.FromTsv("a\r\n", italic: false));
+        Assert.Equal(new[] { new[] { "a" }, new[] { "" }, new[] { "b" } }, Texts(TableClipboard.FromTsv("a\n\nb", italic: false)));
+    }
+
+    [Fact]
+    public void FromTsv_UnclosedQuoteTakesRestOfText()
+    {
+        var rows = TableClipboard.FromTsv("\"a\tb", italic: false);
+
+        Assert.Equal(new[] { new[] { "a\tb" } }, Texts(rows));
+    }
 }

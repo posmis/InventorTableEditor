@@ -207,4 +207,57 @@ public class SettingsTests : IDisposable
         session.Undo();
         Assert.Equal(0.5, session.Model.Style.OuterLineMm);
     }
+
+    [Fact]
+    public void Clone_IsIndependent()
+    {
+        var settings = new UserSettings();
+        var copy = settings.Clone();
+
+        copy.Style.FontSizeMm = 7;
+        copy.NewTableRows = 9;
+
+        Assert.Equal(5, settings.Style.FontSizeMm);
+        Assert.Equal(3, settings.NewTableRows);
+    }
+
+    [Theory]
+    [InlineData(0, 3)]
+    [InlineData(3, 0)]
+    [InlineData(UserSettings.MaxNewTableSize + 1, 3)]
+    public void Check_NewTableSize(int rows, int columns)
+    {
+        var errors = new UserSettings { NewTableRows = rows, NewTableColumns = columns }.Check();
+
+        Assert.Single(errors);
+    }
+
+    [Fact]
+    public void FromJson_Null_IsFactory()
+    {
+        Assert.Equal(new UserSettings().ToJson(), UserSettings.FromJson("null").ToJson());
+    }
+
+    [Fact]
+    public void TableFromJson_RepairsInvalidStyleInsteadOfFailing()
+    {
+        var model = TableModel.FromJson("""{"Style":{"FontSizeMm":0,"InnerLineMm":-1,"HeaderAlignment":7},"ColumnWidths":[20],"RowHeights":[8],"Cells":[[{"Runs":[]}]]}""");
+
+        Assert.Equal(5, model.Style.FontSizeMm);
+        Assert.Equal(0.25, model.Style.InnerLineMm);
+        Assert.Equal(HorizontalTextAlignment.Center, model.Style.HeaderAlignment);
+    }
+
+    [Fact]
+    public void ApplyStyle_SameItalicKeepsRunsUntouched()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.SetCell(0, 0, new TableCell { Runs = { new TextRun("a", italic: false) } });
+        var style = model.Style.Clone();
+        style.FontSizeMm = 7;
+
+        model.ApplyStyle(style);
+
+        Assert.False(model.GetCell(0, 0).Runs.Single().Italic);
+    }
 }

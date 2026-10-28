@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using InventorTableEditor.Core.IO;
 using InventorTableEditor.Core.Model;
 
 namespace InventorTableEditor.Core.Settings;
@@ -90,15 +91,6 @@ public sealed class UserSettings
         }
     }
 
-    /// <summary>Сохраняет настройки: сначала во временный файл, потом заменяет — файл не останется обрезанным.</summary>
-    public void Save(string path)
-    {
-        var directory = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory);
-
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, ToJson(), new UTF8Encoding(false));
-        File.Move(temporary, path, overwrite: true);
-    }
+    /// <summary>Сохраняет настройки (через временный файл — файл не останется обрезанным).</summary>
+    public void Save(string path) => AtomicFile.WriteAllText(path, ToJson());
 }

@@ -441,16 +441,8 @@ public sealed class TableModel
             throw new InvalidDataException("Повреждённые данные таблицы: число строк и столбцов не совпадает с ячейками.");
         if (ColumnWidths.Concat(RowHeights).Any(size => !double.IsFinite(size) || size <= 0))
             throw new InvalidDataException("Повреждённые данные таблицы: размеры строк и столбцов должны быть положительными.");
-        if (!(Style.FontSizeMm > 0) || !(Style.ScriptScale > 0) || !(Style.LineSpacing > 0) || Style.PaddingMm < 0)
-            throw new InvalidDataException("Повреждённые данные таблицы: недопустимые параметры оформления.");
-        if (!(Style.MinScaleBeforeWrap > 0 && Style.MinScaleBeforeWrap <= 1))
-            Style.MinScaleBeforeWrap = new TableStyle().MinScaleBeforeWrap;
-        var factory = new TableStyle();
-        if (!(Style.HeaderLineMm > 0) || !double.IsFinite(Style.HeaderLineMm))
-            Style.HeaderLineMm = Style.OuterLineMm;
-        if (!Enum.IsDefined(Style.HeaderAlignment)) Style.HeaderAlignment = factory.HeaderAlignment;
-        if (!Enum.IsDefined(Style.DataAlignment)) Style.DataAlignment = factory.DataAlignment;
-        if (!Enum.IsDefined(Style.VerticalAlignment)) Style.VerticalAlignment = factory.VerticalAlignment;
+        // Недопустимые параметры оформления заменяются заводскими: таблица всё равно откроется.
+        Style.Repair();
 
         foreach (var row in Cells)
         {

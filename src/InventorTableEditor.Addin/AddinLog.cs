@@ -11,8 +11,7 @@ internal static class AddinLog
 {
     private const long MaxSizeBytes = 1024 * 1024;
 
-    public static string FilePath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "InventorTableEditor", "log.txt");
+    public static string FilePath => AddinPaths.LogFile;
 
     public static void Write(string message)
     {

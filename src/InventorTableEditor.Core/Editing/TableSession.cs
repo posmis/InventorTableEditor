@@ -75,7 +75,12 @@ public sealed class TableSession
         var merge = Model.GetMerge(Row, Column);
         var row = rowStep > 0 ? merge.Bottom + 1 : rowStep < 0 ? merge.Top - 1 : merge.Top;
         var column = columnStep > 0 ? merge.Right + 1 : columnStep < 0 ? merge.Left - 1 : merge.Left;
-        if (columnStep != 0)
+        if (columnStep == 0)
+            return row < 0 || row >= Model.RowCount ? null : Model.AnchorOf(row, column);
+
+        // По Tab — по ячейкам слева направо и сверху вниз. После переноса на следующую строку можно снова
+        // попасть в текущую объединённую ячейку (она шире одной строки) — такие позиции пропускаются.
+        while (true)
         {
             if (column >= Model.ColumnCount)
             {
@@ -87,9 +92,16 @@ public sealed class TableSession
                 column = Model.ColumnCount - 1;
                 row--;
             }
-        }
 
-        return row < 0 || row >= Model.RowCount || column < 0 || column >= Model.ColumnCount ? null : Model.AnchorOf(row, column);
+            if (row < 0 || row >= Model.RowCount)
+                return null;
+
+            var anchor = Model.AnchorOf(row, column);
+            if (anchor != (merge.Top, merge.Left))
+                return anchor;
+
+            column += columnStep;
+        }
     }
 
     // ---------- Выделение ячеек ----------
@@ -381,7 +393,6 @@ public sealed class TableSession
         Change(() => Model.RemoveRow(Row));
     }
 
-    /// <summary>Включает или выключает строку заголовков; текущей становится первая строка.</summary>
     /// <summary>Заменяет всю таблицу (новая по шаблону) — один шаг отмены; курсор в первой ячейке.</summary>
     public void ReplaceTable(TableModel model) => Change(() =>
     {
@@ -393,13 +404,14 @@ public sealed class TableSession
     /// <summary>Оформление из окна настроек — один шаг отмены. false — ничего не изменилось.</summary>
     public bool ApplyStyle(TableStyle style)
     {
-        if (System.Text.Json.JsonSerializer.Serialize(style) == System.Text.Json.JsonSerializer.Serialize(Model.Style))
+        if (style.SameAs(Model.Style))
             return false;
 
         Change(() => Model.ApplyStyle(style));
         return true;
     }
 
+    /// <summary>Включает или выключает строку заголовков; текущей становится первая строка.</summary>
     public void SetHeader(bool enabled)
     {
         if (enabled == Model.HasHeader)

@@ -17,7 +17,7 @@ namespace InventorTableEditor.Addin.UI;
 /// </summary>
 internal sealed class TemplatesWindow : Window
 {
-    private readonly ResourceDictionary _theme = ThemeLoader.Load();
+    private readonly ResourceDictionary _theme;
     private readonly TemplateLibrary _library;
     private readonly TableModel _current;
     private readonly ListBox _list = new() { Width = 250, BorderThickness = new Thickness(0) };
@@ -32,19 +32,12 @@ internal sealed class TemplatesWindow : Window
     {
         _library = library;
         _current = current;
-        Resources.MergedDictionaries.Add(_theme);
+        _theme = ThemeLoader.ApplyTo(this);
         Title = "Шаблоны таблиц";
         Width = 860;
         Height = 560;
         MinWidth = 640;
         MinHeight = 400;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        ShowInTaskbar = false;
-        FontFamily = new FontFamily("Segoe UI");
-        FontSize = 12;
-        Background = ThemeBrush("WindowBrush");
-        Foreground = ThemeBrush("TextBrush");
-        UseLayoutRounding = true;
         _previewNote.Foreground = ThemeBrush("MutedTextBrush");
 
         _createButton = new Button { Content = "Создать по шаблону", Style = ThemeStyle("PrimaryButton"), Margin = new Thickness(0, 0, 8, 0),

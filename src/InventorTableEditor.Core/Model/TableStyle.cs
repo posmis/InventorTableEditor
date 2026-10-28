@@ -56,6 +56,10 @@ public sealed class TableStyle
 
     public TableStyle Clone() => (TableStyle)MemberwiseClone();
 
+    /// <summary>Совпадают ли все параметры оформления.</summary>
+    public bool SameAs(TableStyle other) =>
+        System.Text.Json.JsonSerializer.Serialize(this) == System.Text.Json.JsonSerializer.Serialize(other);
+
     /// <summary>Допустимые значения параметров — для окна настроек и проверки файла настроек.</summary>
     public static class Limits
     {

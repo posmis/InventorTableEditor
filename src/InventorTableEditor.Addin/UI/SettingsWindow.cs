@@ -21,7 +21,7 @@ internal sealed class SettingsWindow : Window
     private static readonly string[] HorizontalNames = { "Слева", "По центру", "Справа" };
     private static readonly string[] VerticalNames = { "Сверху", "По середине", "Снизу" };
 
-    private readonly ResourceDictionary _theme = ThemeLoader.Load();
+    private readonly ResourceDictionary _theme;
     private readonly List<NumberField> _numbers = new();
     private readonly ComboBox _fontBox = new() { IsEditable = true, Width = 170 };
     private readonly CheckBox _italicBox = new() { Content = "Наклонный текст", Margin = new Thickness(0, 4, 0, 4) };
@@ -42,17 +42,10 @@ internal sealed class SettingsWindow : Window
     public SettingsWindow(TableStyle tableStyle, UserSettings saved)
     {
         _saved = saved;
-        Resources.MergedDictionaries.Add(_theme);
+        _theme = ThemeLoader.ApplyTo(this);
         Title = "Настройки таблицы";
         SizeToContent = SizeToContent.WidthAndHeight;
         ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        ShowInTaskbar = false;
-        FontFamily = new FontFamily("Segoe UI");
-        FontSize = 12;
-        Background = ThemeBrush("WindowBrush");
-        Foreground = ThemeBrush("TextBrush");
-        UseLayoutRounding = true;
 
         Content = BuildLayout();
         Fill(tableStyle, saved);

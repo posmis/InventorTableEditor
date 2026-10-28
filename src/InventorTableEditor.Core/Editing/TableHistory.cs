@@ -11,8 +11,11 @@ public readonly record struct TableCursor(int Row, int Column, int Caret);
 /// </summary>
 public sealed class TableHistory
 {
-    private readonly Stack<Entry> _undo = new();
-    private readonly Stack<Entry> _redo = new();
+    /// <summary>Сколько шагов отмены хранится; более старые забываются (каждый шаг — копия таблицы).</summary>
+    public const int MaxSteps = 200;
+
+    private readonly List<Entry> _undo = new();
+    private readonly List<Entry> _redo = new();
     private string? _mergeKey;
 
     public bool CanUndo => _undo.Count > 0;
@@ -28,7 +31,7 @@ public sealed class TableHistory
         if (mergeKey != null && mergeKey == _mergeKey)
             return;
 
-        _undo.Push(new Entry(before.ToJson(), cursor));
+        Push(_undo, new Entry(before.ToJson(), cursor));
         _redo.Clear();
         _mergeKey = mergeKey;
     }
@@ -42,15 +45,23 @@ public sealed class TableHistory
     /// <summary>Повторяет отменённый шаг; null — повторять нечего.</summary>
     public (TableModel Model, TableCursor Cursor)? Redo(TableModel current, TableCursor cursor) => Move(_redo, _undo, current, cursor);
 
-    private (TableModel Model, TableCursor Cursor)? Move(Stack<Entry> from, Stack<Entry> to, TableModel current, TableCursor cursor)
+    private (TableModel Model, TableCursor Cursor)? Move(List<Entry> from, List<Entry> to, TableModel current, TableCursor cursor)
     {
         _mergeKey = null;
         if (from.Count == 0)
             return null;
 
-        to.Push(new Entry(current.ToJson(), cursor));
-        var entry = from.Pop();
+        Push(to, new Entry(current.ToJson(), cursor));
+        var entry = from[^1];
+        from.RemoveAt(from.Count - 1);
         return (TableModel.FromJson(entry.Json), entry.Cursor);
+    }
+
+    private static void Push(List<Entry> steps, Entry entry)
+    {
+        steps.Add(entry);
+        if (steps.Count > MaxSteps)
+            steps.RemoveAt(0);
     }
 
     private sealed record Entry(string Json, TableCursor Cursor);

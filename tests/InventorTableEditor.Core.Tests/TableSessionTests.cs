@@ -1,3 +1,4 @@
+using InventorTableEditor.Core.Clipboard;
 using InventorTableEditor.Core.Editing;
 using InventorTableEditor.Core.Model;
 
@@ -417,5 +418,110 @@ public class TableSessionTests
         session.Undo();
         Assert.Equal(new[] { 10.0, 10 }, session.Model.RowHeights);
         Assert.False(session.CanUndo);
+    }
+
+    // ---------- Дополнительно ----------
+
+    [Fact]
+    public void TargetCells_SkipCoveredCellsOfSelection()
+    {
+        var session = Session();
+        session.Model.Merge(new CellRange(0, 0, 0, 1));
+        session.BeginSelection(0, 0);
+        session.ExtendSelection(1, 1);
+
+        Assert.Equal(new[] { (0, 0), (1, 0), (1, 1) }, session.TargetCells);
+    }
+
+    [Fact]
+    public void TargetCells_WithoutSelectionIsCurrentCell()
+    {
+        var session = Session();
+        session.MoveTo(2, 1);
+
+        Assert.Equal(new[] { (2, 1) }, session.TargetCells);
+    }
+
+    [Fact]
+    public void ClearSelection_ReportsWhetherSomethingWasSelected()
+    {
+        var session = Session();
+
+        Assert.False(session.ClearSelection());
+        session.BeginSelection(0, 0);
+        session.ExtendSelection(1, 1);
+        Assert.True(session.ClearSelection());
+        Assert.Null(session.Range);
+    }
+
+    [Fact]
+    public void ExtendSelection_SameRangeReturnsFalse()
+    {
+        var session = Session();
+        session.BeginSelection(0, 0);
+
+        Assert.True(session.ExtendSelection(1, 1));
+        Assert.False(session.ExtendSelection(1, 1));
+    }
+
+    [Fact]
+    public void CanMergeAndSplit_FollowSelectionAndCurrentCell()
+    {
+        var session = Session();
+        Assert.False(session.CanMerge);
+        Assert.False(session.CanSplit);
+
+        session.BeginSelection(0, 0);
+        session.ExtendSelection(0, 1);
+        Assert.True(session.CanMerge);
+        session.MergeSelection();
+
+        Assert.False(session.CanMerge);
+        Assert.True(session.CanSplit);
+    }
+
+    [Fact]
+    public void Undo_AfterStyleChange_RestoresStyle()
+    {
+        var session = Session();
+        var style = session.Model.Style.Clone();
+        style.FontName = "Arial";
+        style.HeaderAlignment = HorizontalTextAlignment.Right;
+
+        session.ApplyStyle(style);
+        session.Undo();
+
+        Assert.Equal("Gost merged", session.Model.Style.FontName);
+        Assert.Equal(HorizontalTextAlignment.Center, session.Model.Style.HeaderAlignment);
+        session.Redo();
+        Assert.Equal("Arial", session.Model.Style.FontName);
+    }
+
+    [Fact]
+    public void ApplyStyle_ResetsSelection()
+    {
+        var session = Session();
+        session.BeginSelection(0, 0);
+        session.ExtendSelection(1, 1);
+        var style = session.Model.Style.Clone();
+        style.PaddingMm = 2;
+
+        session.ApplyStyle(style);
+
+        Assert.Null(session.Range);
+    }
+
+    [Fact]
+    public void PasteCells_IntoHeaderRowKeepsHeader()
+    {
+        var session = Session();
+        session.SetHeader(true);
+        session.MoveTo(0, 0);
+
+        session.PasteCells(TableClipboard.FromTsv("H1\tH2", italic: true));
+
+        Assert.True(session.Model.HasHeader);
+        Assert.Equal("H2", session.Model.GetText(0, 1));
+        Assert.Equal(HorizontalTextAlignment.Center, session.Model.GetHorizontalAlignment(0, 1));
     }
 }

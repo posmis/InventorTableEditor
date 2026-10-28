@@ -202,7 +202,12 @@ public static class TableClipboard
                 var attributes = cellMatch.Groups[1].Value;
                 var columnSpan = Span(attributes, "colspan");
                 var rowSpan = Span(attributes, "rowspan");
-                row.Add(ParseCell(cellMatch.Groups[2].Value, italic));
+                // Формат, заданный самой ячейке (style у td), действует на весь её текст.
+                var content = cellMatch.Groups[2].Value;
+                var cellStyle = StyleOf(attributes);
+                if (cellStyle.Length > 0)
+                    content = $"<span style=\"{cellStyle}\">{content}</span>";
+                row.Add(ParseCell(content, italic));
                 for (var extra = 1; extra < columnSpan; extra++)
                     row.Add(new TableCell());
                 for (var below = 1; below < rowSpan; below++)
@@ -288,7 +293,7 @@ public static class TableClipboard
                 continue;
 
             var current = formats.Peek();
-            var style = Regex.Match(attributes, @"style\s*=\s*[""']([^""']*)[""']", RegexOptions.IgnoreCase).Groups[1].Value.ToLowerInvariant();
+            var style = StyleOf(attributes).ToLowerInvariant();
             formats.Push(current with
             {
                 Bold = current.Bold || tag is "b" or "strong" || Regex.IsMatch(style, @"font-weight\s*:\s*(bold|[6-9]00)"),
@@ -322,6 +327,11 @@ public static class TableClipboard
         if (cell.Runs.Count > 0)
             cell.Runs[^1].Text = cell.Runs[^1].Text.TrimEnd();
     }
+
+    private static string StyleOf(string attributes) =>
+        Regex.Match(attributes, @"style\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.IgnoreCase) is { Success: true } match
+            ? match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value
+            : string.Empty;
 
     private static int Span(string attributes, string name)
     {

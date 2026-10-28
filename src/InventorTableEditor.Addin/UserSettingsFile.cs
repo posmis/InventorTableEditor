@@ -7,8 +7,7 @@ namespace InventorTableEditor.Addin;
 /// <summary>Настройки пользователя для новых таблиц: %APPDATA%\InventorTableEditor\settings.json.</summary>
 internal static class UserSettingsFile
 {
-    public static string FilePath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "InventorTableEditor", "settings.json");
+    public static string FilePath => AddinPaths.SettingsFile;
 
     /// <summary>Сохранённые настройки; нет файла или он повреждён — заводские (ошибка пишется в журнал).</summary>
     public static UserSettings Load()

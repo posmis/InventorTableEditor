@@ -108,4 +108,65 @@ public class TableHistoryTests
 
         return count;
     }
+
+    [Fact]
+    public void History_KeepsOnlyLastSteps()
+    {
+        var history = new TableHistory();
+        var model = TableModel.CreateEmpty(1, 1);
+        for (var i = 0; i < TableHistory.MaxSteps + 5; i++)
+        {
+            history.Record(model, Cursor);
+            model.SetText(0, 0, i.ToString());
+        }
+
+        var steps = 0;
+        while (history.Undo(model, Cursor) is { } step)
+        {
+            model = step.Model;
+            steps++;
+        }
+
+        Assert.Equal(TableHistory.MaxSteps, steps);
+        // Самые старые шаги забыты: до пустой таблицы уже не вернуться.
+        Assert.Equal("4", model.GetText(0, 0));
+    }
+
+    [Fact]
+    public void UndoReturnsIndependentCopies()
+    {
+        var history = new TableHistory();
+        var model = TableModel.CreateEmpty(1, 1);
+        history.Record(model, Cursor);
+        model.SetText(0, 0, "x");
+
+        var undone = history.Undo(model, Cursor)!.Value.Model;
+        undone.SetText(0, 0, "changed");
+        var redone = history.Redo(undone, Cursor)!.Value.Model;
+
+        Assert.Equal("x", redone.GetText(0, 0));
+        Assert.Equal("x", model.GetText(0, 0));
+    }
+
+    [Fact]
+    public void UndoThenRedoAll_RestoresFinalState()
+    {
+        var history = new TableHistory();
+        var model = TableModel.CreateEmpty(1, 1);
+        foreach (var text in new[] { "a", "b", "c" })
+        {
+            history.Record(model, Cursor);
+            model.SetText(0, 0, text);
+        }
+
+        while (history.Undo(model, Cursor) is { } step)
+            model = step.Model;
+        Assert.Equal("", model.GetText(0, 0));
+        Assert.False(history.CanUndo);
+
+        while (history.Redo(model, Cursor) is { } step)
+            model = step.Model;
+        Assert.Equal("c", model.GetText(0, 0));
+        Assert.False(history.CanRedo);
+    }
 }

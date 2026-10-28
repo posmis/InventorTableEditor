@@ -168,9 +168,6 @@ public class PasteTests
         Assert.All(runs, r => Assert.Equal("Arial", r.FontName));
         Assert.Equal(ScriptPosition.Superscript, runs[2].Script);
         Assert.Equal(ScriptPosition.Superscript, buffer.TypingFormat.Script);
-
-        Assert.True(buffer.Undo());
-        Assert.Equal("ab", buffer.Text);
     }
 
     [Fact]
