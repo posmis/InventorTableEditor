@@ -30,6 +30,11 @@ public sealed class TableCell
         return cell;
     }
 
+    /// <summary>Тот же текст с тем же форматом (выравнивание не сравнивается).</summary>
+    public bool SameContent(TableCell other) =>
+        Runs.Count == other.Runs.Count
+        && Runs.Zip(other.Runs).All(pair => pair.First.Text == pair.Second.Text && pair.First.SameFormat(pair.Second));
+
     public TableCell Clone() => new()
     {
         Runs = Runs.Select(r => r.Clone()).ToList(),

@@ -60,8 +60,11 @@ internal sealed class CellEditor : FrameworkElement
 
     public CellTextBuffer Buffer { get; }
 
-    /// <summary>Текст изменился — нужно обновить модель и раскладку таблицы.</summary>
-    public event Action<CellEditor>? ContentChanged;
+    /// <summary>
+    /// Текст изменился — нужно обновить модель и раскладку таблицы. Вид правки нужен общей истории отмены:
+    /// подряд набранный текст — один шаг.
+    /// </summary>
+    public event Action<CellEditor, EditKind>? ContentChanged;
 
     /// <summary>Сдвинулся курсор или изменился формат набираемого текста — обновить панель.</summary>
     public event Action<CellEditor>? StateChanged;
@@ -114,6 +117,13 @@ internal sealed class CellEditor : FrameworkElement
         var all = Buffer.All(predicate);
         Buffer.MoveTo(caret, extend: false);
         return all;
+    }
+
+    /// <summary>Ставит курсор в позицию текста и фокус в ячейку (после отмены действия).</summary>
+    public void FocusAt(int caret)
+    {
+        Buffer.MoveTo(caret, extend: false);
+        Focus();
     }
 
     /// <summary>Ставит курсор в конец текста (при переходе в ячейку с клавиатуры).</summary>
@@ -195,7 +205,7 @@ internal sealed class CellEditor : FrameworkElement
             return;
 
         Buffer.Insert(text);
-        AfterChange(contentChanged: true);
+        AfterChange(contentChanged: true, EditKind.Typing);
         e.Handled = true;
     }
 
@@ -238,12 +248,12 @@ internal sealed class CellEditor : FrameworkElement
                 break;
             case Key.Back:
                 Buffer.Backspace();
-                contentChanged = true;
-                break;
+                AfterChange(contentChanged: true, EditKind.Deleting);
+                return true;
             case Key.Delete:
                 Buffer.Delete();
-                contentChanged = true;
-                break;
+                AfterChange(contentChanged: true, EditKind.Deleting);
+                return true;
             case Key.Enter:
                 Buffer.Insert("\n");
                 contentChanged = true;
@@ -279,12 +289,6 @@ internal sealed class CellEditor : FrameworkElement
                 break;
             case Key.Space:
                 Buffer.ResetScript();
-                break;
-            case Key.Z:
-                Buffer.Undo();
-                break;
-            case Key.Y:
-                Buffer.Redo();
                 break;
             case Key.A:
                 Buffer.SelectAll();
@@ -332,11 +336,11 @@ internal sealed class CellEditor : FrameworkElement
             Clipboard.SetText(Buffer.SelectedText.Replace("\n", Environment.NewLine));
     }
 
-    private void AfterChange(bool contentChanged)
+    private void AfterChange(bool contentChanged, EditKind kind = EditKind.Other)
     {
         RestartBlink();
         if (contentChanged)
-            ContentChanged?.Invoke(this);
+            ContentChanged?.Invoke(this, kind);
         else
             InvalidateVisual();
         StateChanged?.Invoke(this);
@@ -480,4 +484,17 @@ internal sealed class CellEditor : FrameworkElement
 
     private static bool SameRuns(TableCell a, TableCell b) =>
         a.Runs.Count == b.Runs.Count && a.Runs.Zip(b.Runs).All(p => p.First.Text == p.Second.Text && p.First.SameFormat(p.Second));
+}
+
+/// <summary>Вид правки текста ячейки — для объединения шагов истории отмены.</summary>
+internal enum EditKind
+{
+    /// <summary>Набор текста: подряд в одной ячейке — один шаг.</summary>
+    Typing,
+
+    /// <summary>Backspace и Delete: подряд в одной ячейке — один шаг.</summary>
+    Deleting,
+
+    /// <summary>Прочее (формат, вставка, перенос строки) — отдельный шаг.</summary>
+    Other,
 }

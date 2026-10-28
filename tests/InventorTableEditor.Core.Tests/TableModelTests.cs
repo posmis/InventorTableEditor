@@ -185,4 +185,15 @@ public class TableModelTests
     {
         Assert.ThrowsAny<Exception>(() => TableModel.FromJson("не json"));
     }
+
+    [Fact]
+    public void TableCell_SameContent_ComparesTextAndFormat()
+    {
+        var a = new TableCell { Runs = { new TextRun("ab") } };
+
+        Assert.True(a.SameContent(new TableCell { Runs = { new TextRun("ab") }, HorizontalAlignment = HorizontalTextAlignment.Right }));
+        Assert.False(a.SameContent(new TableCell { Runs = { new TextRun("ab") { Bold = true } } }));
+        Assert.False(a.SameContent(new TableCell { Runs = { new TextRun("a") } }));
+        Assert.False(a.SameContent(new TableCell()));
+    }
 }
