@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Windows;
@@ -435,6 +437,18 @@ internal sealed class TableEditorWindow : Window
             return;
         }
 
+        // Буфер обмена — с форматом и индексами, обмен с Word и Excel. В полях ввода (шрифт, размеры) — их собственный.
+        if (ctrl && e.Key is Key.C or Key.X or Key.V && Keyboard.FocusedElement is not TextBoxBase)
+        {
+            if (e.Key == Key.V)
+                PasteFromClipboard();
+            else
+                CopyToClipboard(cut: e.Key == Key.X);
+            e.Handled = true;
+            SyncFormatBar();
+            return;
+        }
+
         if (_session.Range is not { } range)
             return;
 
@@ -442,11 +456,7 @@ internal sealed class TableEditorWindow : Window
         {
             case Key.Delete:
                 // Delete очищает все выделенные ячейки, как в Excel.
-                _session.Batch(() =>
-                {
-                    foreach (var editor in EditorsIn(range))
-                        editor.EditAll(b => b.DeleteSelection());
-                });
+                ClearCells(range);
                 e.Handled = true;
                 break;
             case Key.B when ctrl:
@@ -481,6 +491,173 @@ internal sealed class TableEditorWindow : Window
 
         if (e.Handled)
             SyncFormatBar();
+    }
+
+    // ---------- Буфер обмена ----------
+
+    /// <summary>
+    /// Копирование, как в Excel и Word: выделенные ячейки — таблицей, выделенный текст ячейки — с форматом,
+    /// без выделения — вся текущая ячейка.
+    /// </summary>
+    private void CopyToClipboard(bool cut)
+    {
+        if (_session.Range is { } range)
+        {
+            if (ClipboardData.SetCells(Model, range) && cut)
+                ClearCells(range);
+            return;
+        }
+
+        if (ActiveEditor is not { } editor)
+            return;
+
+        if (editor.Buffer.HasSelection)
+        {
+            if (ClipboardData.SetRuns(editor.Buffer.SelectedRuns()) && cut)
+                editor.Edit(b => b.DeleteSelection());
+        }
+        else if (ClipboardData.SetCells(Model, new CellRange(_session.Row, _session.Column, _session.Row, _session.Column)) && cut)
+        {
+            editor.EditAll(b => b.DeleteSelection());
+        }
+    }
+
+    /// <summary>
+    /// Вставка: одна ячейка из буфера — в текст текущей ячейки на место курсора (с форматом и индексами);
+    /// несколько ячеек или выделение в таблице — по ячейкам, начиная с левой верхней, как в Excel.
+    /// </summary>
+    private void PasteFromClipboard()
+    {
+        if (ClipboardData.GetCells(Model.Style.Italic) is not { } cells)
+            return;
+
+        if (_session.Range == null && cells.Count == 1 && cells[0].Count == 1)
+        {
+            ActiveEditor?.Edit(b => b.InsertRuns(cells[0][0].Runs));
+            return;
+        }
+
+        if (!_session.PasteCells(cells))
+            return;
+
+        // Сетка перестраивается (могли добавиться строки и столбцы), вставленные ячейки остаются выделенными.
+        var pasted = _session.Range;
+        RebuildGrid();
+        if (pasted is { } range)
+        {
+            _session.BeginSelection(range.Top, range.Left);
+            _session.ExtendSelection(range.Bottom, range.Right);
+            ShowSelection();
+        }
+    }
+
+    /// <summary>Очищает текст выделенных ячеек — один шаг отмены.</summary>
+    private void ClearCells(CellRange range) => _session.Batch(() =>
+    {
+        foreach (var editor in EditorsIn(range))
+            editor.EditAll(b => b.DeleteSelection());
+    });
+
+    // ---------- Спецсимволы ----------
+
+    /// <summary>Быстрый список спецсимволов: символ и подсказка.</summary>
+    private static readonly (string Symbol, string Name)[] Symbols =
+    {
+        ("⌀", "Знак диаметра"), ("Ø", "Диаметр (буква Ø)"), ("±", "Плюс-минус"), ("°", "Градус"), ("′", "Минута"),
+        ("″", "Секунда"), ("×", "Умножение"), ("·", "Точка (умножение)"), ("≤", "Меньше или равно"), ("≥", "Больше или равно"),
+        ("≈", "Приблизительно равно"), ("≠", "Не равно"), ("∞", "Бесконечность"), ("√", "Корень"), ("∑", "Сумма"),
+        ("∠", "Угол"), ("⊥", "Перпендикулярно"), ("∥", "Параллельно"), ("→", "Стрелка"), ("—", "Тире"),
+        ("№", "Номер"), ("§", "Параграф"), ("‰", "Промилле"), ("²", "Квадрат"), ("³", "Куб"),
+        ("½", "Половина"), ("¼", "Четверть"), ("¾", "Три четверти"), ("«", "Открывающая кавычка"), ("»", "Закрывающая кавычка"),
+        ("α", "Альфа"), ("β", "Бета"), ("γ", "Гамма"), ("δ", "Дельта"), ("Δ", "Дельта прописная"),
+        ("ε", "Эпсилон"), ("η", "Эта"), ("θ", "Тета"), ("λ", "Лямбда"), ("μ", "Мю"),
+        ("π", "Пи"), ("ρ", "Ро"), ("σ", "Сигма"), ("τ", "Тау"), ("φ", "Фи"),
+        ("ψ", "Пси"), ("ω", "Омега"), ("Ω", "Омега прописная"), ("ν", "Ню"), ("ξ", "Кси"),
+    };
+
+    /// <summary>Кнопка «Символ» с выпадающей панелью: быстрый список и таблица символов Windows.</summary>
+    private Button SymbolsButton()
+    {
+        var button = new Button
+        {
+            Content = Row(Icons.Letter("Ω", FontWeights.Normal, FontStyles.Normal, false),
+                new TextBlock { Text = "▾", FontSize = 9, Margin = new Thickness(1, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }),
+            ToolTip = "Вставить спецсимвол",
+            Style = ThemeStyle("FlatButton"),
+        };
+
+        var popup = new Popup { PlacementTarget = button, Placement = PlacementMode.Bottom, StaysOpen = false };
+        var symbols = new UniformGrid { Columns = 10 };
+        // Символы показаны шрифтом таблицы: сразу видно, есть ли знак в шрифте; если нет — подставится системный.
+        var font = new FontFamily(Model.Style.FontName + ", Segoe UI Symbol");
+        foreach (var (symbol, name) in Symbols)
+        {
+            var item = new Button
+            {
+                Content = new TextBlock { Text = symbol, FontFamily = font, FontSize = 16 },
+                ToolTip = name,
+                Style = ThemeStyle("FlatButton"),
+                Width = 30,
+                Height = 30,
+            };
+            item.Click += (_, _) =>
+            {
+                popup.IsOpen = false;
+                InsertSymbol(symbol);
+            };
+            symbols.Children.Add(item);
+        }
+
+        var charmap = new Button
+        {
+            Content = "Таблица символов Windows…",
+            ToolTip = "Выберите символ, нажмите «Копировать», затем Ctrl+V в ячейке",
+            Style = ThemeStyle("FlatButton"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(6, 3, 6, 3),
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        charmap.Click += (_, _) =>
+        {
+            popup.IsOpen = false;
+            OpenCharacterMap();
+        };
+
+        var content = new StackPanel();
+        content.Children.Add(symbols);
+        content.Children.Add(new Border { Height = 1, Background = ThemeBrush("BorderBrush"), Margin = new Thickness(0, 6, 0, 0) });
+        content.Children.Add(charmap);
+        popup.Child = new Border
+        {
+            Background = ThemeBrush("PanelBrush"),
+            BorderBrush = ThemeBrush("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(6),
+            Child = content,
+        };
+
+        button.Click += (_, _) => popup.IsOpen = true;
+        return button;
+    }
+
+    /// <summary>Символ — в текущую ячейку на место курсора (вместо выделенного текста).</summary>
+    private void InsertSymbol(string symbol)
+    {
+        ClearRange();
+        ActiveEditor?.Edit(b => b.Insert(symbol));
+        FocusActiveEditor();
+    }
+
+    private void OpenCharacterMap()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("charmap.exe") { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(this, "Не удалось открыть таблицу символов Windows: " + ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     // ---------- Лента ----------
@@ -518,6 +695,7 @@ internal sealed class TableEditorWindow : Window
         groups.Children.Add(RibbonGroup("Шрифт", font));
         groups.Children.Add(RibbonGroup("Начертание", style));
         groups.Children.Add(RibbonGroup("Выравнивание", alignment));
+        groups.Children.Add(RibbonGroup("Вставка", Row(SymbolsButton())));
 
         return new Border
         {
@@ -767,12 +945,11 @@ internal sealed class TableEditorWindow : Window
     private void FillContextMenu(ContextMenu menu)
     {
         menu.Items.Clear();
-        var editor = ActiveEditor;
-        var single = _session.Range == null;
+        var canCopy = _session.Range != null || ActiveEditor != null;
 
-        Item("Вырезать", "Ctrl+X", null, single && editor?.CanCopy == true, () => editor?.Cut());
-        Item("Копировать", "Ctrl+C", null, single && editor?.CanCopy == true, () => editor?.Copy());
-        Item("Вставить", "Ctrl+V", null, single && Clipboard.ContainsText(), () => editor?.Paste());
+        Item("Вырезать", "Ctrl+X", null, canCopy, () => CopyToClipboard(cut: true));
+        Item("Копировать", "Ctrl+C", null, canCopy, () => CopyToClipboard(cut: false));
+        Item("Вставить", "Ctrl+V", null, ClipboardData.HasData(), PasteFromClipboard);
         menu.Items.Add(new Separator());
         Item("Объединить ячейки", null, Icons.Merge(), _session.CanMerge, () => RunStructure(() => _session.MergeSelection()));
         Item("Разделить ячейку", null, Icons.Split(), _session.CanSplit, () => RunStructure(() => _session.SplitCurrent()));

@@ -51,9 +51,12 @@
     структура, размеры, выравнивание, история отмены `TableHistory`), правка текста ячейки (`CellTextBuffer`),
     позиции курсора (`CaretMap`), разбор размеров (`MmParser`) и масштаб окна (`Zoom`).
     Окно редактора только отображает состояние сеанса и передаёт ему действия пользователя.
+    Вставка ячеек из буфера — `TableSession.PasteCells`, фрагментов с форматом — `CellTextBuffer.InsertRuns`.
+  - `Clipboard` — данные буфера обмена (`TableClipboard`): текст с табуляциями как в Excel (с кавычками для
+    многострочных ячеек), HTML-таблица и формат «HTML Format» Windows; разбор HTML из Word и Excel в ячейки с форматом.
 - **Addin** (`net8.0-windows`, WPF): точка входа и лента, команды, окно редактора (`TableEditorWindow`,
   `CellEditor` — рисует ячейку через `LinePlanner`), метрики шрифтов Windows (`FontMetrics`, `WpfTextMetrics`),
-  построение в чертеже (`TableRenderer`, `SketchCanvas`, `TextStyleCache`), хранение (`TableStorage`).
+  буфер обмена Windows (`ClipboardData`), построение в чертеже (`TableRenderer`, `SketchCanvas`, `TextStyleCache`), хранение (`TableStorage`).
 
 ## Где лежат файлы пользователя
 

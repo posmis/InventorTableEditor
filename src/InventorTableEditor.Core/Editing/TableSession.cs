@@ -239,6 +239,52 @@ public sealed class TableSession
         return true;
     }
 
+    /// <summary>
+    /// Вставка ячеек из буфера, как в Excel: с левой верхней ячейки выделения (или с текущей). Не хватает
+    /// строк или столбцов — добавляются в конец таблицы. Одна ячейка в буфере и выделение — заполняется всё
+    /// выделение. Закрытые объединением ячейки пропускаются; выравнивание и перенос ячеек таблицы сохраняются.
+    /// Вставленные ячейки становятся выделением. Один шаг отмены. false — вставлять нечего.
+    /// </summary>
+    public bool PasteCells(IReadOnlyList<IReadOnlyList<TableCell>> cells)
+    {
+        var height = cells.Count;
+        var width = cells.Count == 0 ? 0 : cells.Max(row => row.Count);
+        if (height == 0 || width == 0)
+            return false;
+
+        var top = Range?.Top ?? Row;
+        var left = Range?.Left ?? Column;
+        var fill = height == 1 && width == 1 && Range is { } selection ? selection : (CellRange?)null;
+        var target = fill ?? new CellRange(top, left, top + height - 1, left + width - 1);
+
+        Record();
+        while (Model.RowCount <= target.Bottom)
+            Model.InsertRow(Model.RowCount);
+        while (Model.ColumnCount <= target.Right)
+            Model.InsertColumn(Model.ColumnCount);
+
+        foreach (var (row, column) in target.Cells())
+        {
+            if (Model.IsCovered(row, column))
+                continue;
+
+            var sourceRow = cells[fill != null ? 0 : row - top];
+            var source = fill != null ? sourceRow[0] : column - left < sourceRow.Count ? sourceRow[column - left] : new TableCell();
+            var before = Model.GetCell(row, column);
+            var cell = source.Clone();
+            cell.HorizontalAlignment = before.HorizontalAlignment;
+            cell.VerticalAlignment = before.VerticalAlignment;
+            cell.Wrap = before.Wrap;
+            Model.SetCell(row, column, cell);
+        }
+
+        (Row, Column) = Model.AnchorOf(target.Top, target.Left);
+        _anchor = (Row, Column);
+        var expanded = Model.ExpandToMerges(target);
+        Range = expanded == Model.GetMerge(Row, Column) ? null : expanded;
+        return true;
+    }
+
     // ---------- Выравнивание ----------
 
     public void SetHorizontalAlignment(HorizontalTextAlignment alignment)

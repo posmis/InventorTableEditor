@@ -126,6 +126,53 @@ public sealed class CellTextBuffer
         TypingFormat = format;
     }
 
+    /// <summary>Выделенный текст с форматом (для копирования в буфер).</summary>
+    public List<TextRun> SelectedRuns()
+    {
+        var runs = new List<TextRun>();
+        for (var i = SelectionStart; i < SelectionEnd; i++)
+        {
+            if (runs.Count > 0 && runs[^1].SameFormat(_formats[i]))
+                runs[^1].Text += _chars[i];
+            else
+                runs.Add(_formats[i].WithText(_chars[i].ToString()));
+        }
+
+        return runs;
+    }
+
+    /// <summary>
+    /// Вставляет текст с форматом (из буфера) вместо выделения. Шрифт и размер, не заданные во вставке,
+    /// берутся у набираемого текста. Дальше набор продолжается форматом конца вставки, как в Word.
+    /// </summary>
+    public void InsertRuns(IEnumerable<TextRun> runs)
+    {
+        var pasted = runs.Where(r => r.Text.Length > 0).ToList();
+        if (pasted.Count == 0)
+        {
+            if (HasSelection)
+                DeleteSelection();
+            return;
+        }
+
+        SaveUndo();
+        var typing = TypingFormat;
+        RemoveSelection();
+        foreach (var run in pasted)
+        {
+            var format = run.WithText(string.Empty);
+            format.FontName ??= typing.FontName;
+            format.FontSizeMm ??= typing.FontSizeMm;
+            var text = run.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+            _chars.InsertRange(Caret, text);
+            _formats.InsertRange(Caret, Enumerable.Repeat(format, text.Length));
+            Caret += text.Length;
+            TypingFormat = format;
+        }
+
+        Anchor = Caret;
+    }
+
     public void Backspace()
     {
         if (HasSelection)
