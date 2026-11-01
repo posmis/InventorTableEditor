@@ -62,18 +62,18 @@ internal sealed partial class TableEditorWindow
 
         return new Border
         {
-            Background = ThemeBrush("PanelBrush"),
+            Background = ThemeBrush("RibbonBrush"),
             BorderBrush = ThemeBrush("BorderBrush"),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(6, 6, 6, 4),
+            Padding = new Thickness(8, 7, 8, 5),
             Child = groups,
         };
     }
 
     private Border RibbonGroup(string title, UIElement content)
     {
-        var stack = new StackPanel { Margin = new Thickness(8, 0, 8, 0) };
-        stack.Children.Add(new Border { Height = 30, Child = content, VerticalAlignment = VerticalAlignment.Center });
+        var stack = new StackPanel { Margin = new Thickness(10, 0, 10, 0) };
+        stack.Children.Add(new Border { Height = 32, Child = content, VerticalAlignment = VerticalAlignment.Center });
         stack.Children.Add(new TextBlock { Text = title, Style = ThemeStyle("RibbonGroupLabel") });
         return new Border { BorderBrush = ThemeBrush("BorderBrush"), BorderThickness = new Thickness(0, 0, 1, 0), Child = stack };
     }
