@@ -32,17 +32,21 @@ public static class TextWrapper
         return result;
     }
 
-    /// <summary>Строки после переноса как фрагменты: без пробелов в конце, соседние фрагменты одного формата склеены.</summary>
+    /// <summary>Строки после переноса как фрагменты: с пробелами у явных концов строк, соседние фрагменты одного формата склеены.</summary>
     public static List<List<TextRun>> Wrap(TableCell cell, TableStyle style, double availableMm, ITextMetrics? metrics)
     {
         var chars = Flatten(cell);
         return WrapRanges(cell, style, availableMm, metrics)
-            .Select(range => ToRuns(chars, range.Start, TrimmedEnd(chars, range.Start, range.End)))
+            .Select(range => ToRuns(chars, range.Start, TrimmedEnd(cell, range.Start, range.End)))
             .ToList();
     }
 
-    /// <summary>Конец диапазона без пробелов в конце строки.</summary>
-    public static int TrimmedEnd(TableCell cell, int start, int end) => TrimmedEnd(Flatten(cell), start, end);
+    /// <summary>Пробелы отбрасываются только у автоматического переноса, но не перед '\n' или концом текста.</summary>
+    public static int TrimmedEnd(TableCell cell, int start, int end)
+    {
+        var chars = Flatten(cell);
+        return end == chars.Count || chars[end].Ch == '\n' ? end : TrimmedEnd(chars, start, end);
+    }
 
     private static IEnumerable<(int Start, int End)> WrapLine(List<(char Ch, TextRun Format)> chars, int start, int end,
         TableStyle style, double availableMm, ITextMetrics metrics)

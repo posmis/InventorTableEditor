@@ -123,6 +123,11 @@ public static class LinePlanner
             return new LinePlan(runs, pens, 1, start);
         }
 
+        // Крайние пробелы входят в ширину выравниваемой строки, даже если не имеют очертаний.
+        if (pens[0].Run.Text.StartsWith(' '))
+            left = Math.Min(left, 0);
+        right = Math.Max(right, pen);
+
         var available = cell.Width - 2 * style.PaddingMm;
         var width = right - left;
         var scale = width > available && available > 0
