@@ -18,6 +18,22 @@ public class CaretMapTests
     }
 
     [Fact]
+    public void RightAlignedTrailingSpaces_KeepCaretAtPaddedRightEdge()
+    {
+        var model = TableModel.CreateEmpty(1, 1);
+        model.ColumnWidths[0] = 100;
+        model.Style.Italic = false;
+        model.SetText(0, 0, "ab   ");
+        var cell = model.GetCell(0, 0);
+        cell.HorizontalAlignment = HorizontalTextAlignment.Right;
+        var layout = TableLayout.Build(model, FixedMetrics.Instance, includeEmptyCells: true).Texts.Single();
+        var line = CaretMap.Build(cell, layout, model.Style, FixedMetrics.Instance).Lines.Single();
+
+        Assert.Equal(99, line.XOf(5), 6);
+        Assert.Equal(15, line.XOf(5) - line.XOf(2), 6);
+    }
+
+    [Fact]
     public void Positions_FollowCharacterWidths()
     {
         // Текст таблицы наклонный, но ширины букв от наклона не зависят.

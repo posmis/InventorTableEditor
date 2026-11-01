@@ -30,6 +30,31 @@ public class LinePlannerTests
 
     private static TextRun Script(string text, ScriptPosition script, bool italic = false) => new(text, italic) { Script = script };
 
+    [Theory]
+    [InlineData(HorizontalTextAlignment.Left, "  ab", 10)]
+    [InlineData(HorizontalTextAlignment.Right, "ab   ", -15)]
+    [InlineData(HorizontalTextAlignment.Center, "  ab", 5)]
+    [InlineData(HorizontalTextAlignment.Center, "ab  ", -5)]
+    public void EdgeSpaces_ShiftVisibleText(HorizontalTextAlignment alignment, string text, double shift)
+    {
+        var plain = Plan(100, alignment, Upright("ab")).Plan;
+        var spaced = Plan(100, alignment, Upright(text)).Plan;
+
+        Assert.Equal(plain.ToTableX(plain.Runs[0].PenMm) + shift,
+            spaced.ToTableX(spaced.Runs[0].PenMm), 6);
+        Assert.Equal(1, spaced.WidthScale);
+    }
+
+    [Fact]
+    public void SeparatelyFormattedTrailingSpaces_ShiftRightAlignedText()
+    {
+        var plain = Plan(100, HorizontalTextAlignment.Right, Upright("ab")).Plan;
+        var spaced = Plan(100, HorizontalTextAlignment.Right, Upright("ab"),
+            new TextRun("   ") { Bold = true }).Plan;
+
+        Assert.Equal(plain.OriginMm - 15, spaced.OriginMm, 6);
+    }
+
     [Fact]
     public void UprightRuns_FollowEachOtherByAdvance()
     {

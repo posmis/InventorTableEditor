@@ -37,6 +37,7 @@ internal sealed partial class TableEditorWindow : Window
     private static readonly Brush HeaderBackground = new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2));
 
     private readonly ResourceDictionary _theme;
+    private readonly GridLinesOverlay _linesOverlay;
     private readonly Grid _grid = new() { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
     private readonly ScaleTransform _zoomTransform = new(1, 1);
     private readonly Slider _zoomSlider = new() { Minimum = Zoom.Min * 100, Maximum = Zoom.Max * 100, Width = 130, VerticalAlignment = VerticalAlignment.Center };
@@ -88,6 +89,7 @@ internal sealed partial class TableEditorWindow : Window
     {
         _session = new TableSession(TableModel.FromJson(model.ToJson()), () => ActiveEditor?.Buffer.Caret ?? 0);
         UpdateMetrics();
+        _linesOverlay = new GridLinesOverlay(PxPerMm);
 
         _theme = ThemeLoader.ApplyTo(this);
         Title = isNew ? "Новая таблица" : "Редактирование таблицы";
@@ -141,6 +143,7 @@ internal sealed partial class TableEditorWindow : Window
             VerticalAlignment = VerticalAlignment.Top,
             BorderBrush = ThemeBrush("BorderBrush"),
             BorderThickness = new Thickness(1),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Direction = 270, Opacity = 0.22 },
             Child = _grid,
             LayoutTransform = _zoomTransform,
         };
@@ -168,7 +171,7 @@ internal sealed partial class TableEditorWindow : Window
         _grid.PreviewMouseMove += OnGridMouseMove;
         _grid.PreviewMouseLeftButtonUp += OnGridMouseUp;
         _grid.PreviewMouseRightButtonDown += OnGridRightButtonDown;
-        _grid.ContextMenu = new ContextMenu();
+        _grid.ContextMenu = new ContextMenu { Style = ThemeStyle("ContextMenu") };
         _grid.ContextMenuOpening += (_, _) => FillContextMenu(_grid.ContextMenu);
         _grid.MouseLeave += (_, _) =>
         {
@@ -266,10 +269,11 @@ internal sealed partial class TableEditorWindow : Window
         foreach (var unused in Model.RowHeights)
             _grid.RowDefinitions.Add(new RowDefinition());
 
-        // Линии таблицы — как на чертеже: рамка и линия под заголовками толще разделителей.
-        var outer = Math.Max(1, Model.Style.OuterLineMm * PxPerMm);
-        var inner = Math.Max(0.5, Model.Style.InnerLineMm * PxPerMm);
-        var header = Math.Max(0.5, Model.Style.HeaderLineMm * PxPerMm);
+        // Линии и фон строки заголовков — общим слоем под ячейками, привязанным к пикселям устройства:
+        // рамки дробной толщины у каждой ячейки размывались и сливались с белым фоном.
+        Grid.SetRowSpan(_linesOverlay, Math.Max(1, Model.RowCount));
+        Grid.SetColumnSpan(_linesOverlay, Math.Max(1, Model.ColumnCount));
+        _grid.Children.Add(_linesOverlay);
 
         // Одна ячейка редактора на объединённую ячейку: она растянута на все свои строки и столбцы.
         for (var r = 0; r < Model.RowCount; r++)
@@ -283,19 +287,11 @@ internal sealed partial class TableEditorWindow : Window
                 var editor = CreateEditor(r, c);
                 _editors[(r, c)] = editor;
 
-                var bottom = span.Bottom == Model.RowCount - 1 ? outer : Model.HasHeader && span.Bottom == 0 ? header : inner;
-                var right = span.Right == Model.ColumnCount - 1 ? outer : inner;
-                var border = new Border
-                {
-                    BorderBrush = Brushes.Black,
-                    BorderThickness = new Thickness(c == 0 ? outer : 0, r == 0 ? outer : 0, right, bottom),
-                    Child = editor,
-                };
-                Grid.SetRow(border, r);
-                Grid.SetColumn(border, c);
-                Grid.SetRowSpan(border, span.Bottom - span.Top + 1);
-                Grid.SetColumnSpan(border, span.Right - span.Left + 1);
-                _grid.Children.Add(border);
+                Grid.SetRow(editor, r);
+                Grid.SetColumn(editor, c);
+                Grid.SetRowSpan(editor, span.Bottom - span.Top + 1);
+                Grid.SetColumnSpan(editor, span.Right - span.Left + 1);
+                _grid.Children.Add(editor);
             }
         }
 
@@ -308,8 +304,8 @@ internal sealed partial class TableEditorWindow : Window
 
     private CellEditor CreateEditor(int row, int column)
     {
-        var background = Model.IsHeaderRow(row) ? HeaderBackground : Brushes.White;
-        var editor = new CellEditor(Model.GetCell(row, column), Model.Style, PxPerMm, background, ThemeBrush("AccentBrush"));
+        // Фон не рисуем: белый фон даёт лист, строка заголовков — общий слой GridLinesOverlay под ячейками.
+        var editor = new CellEditor(Model.GetCell(row, column), Model.Style, PxPerMm, Brushes.Transparent, ThemeBrush("AccentBrush"));
 
         editor.ContentChanged += (e, kind) =>
         {
@@ -349,6 +345,10 @@ internal sealed partial class TableEditorWindow : Window
     {
         var layout = TableLayout.Build(Model, _metrics, includeEmptyCells: true);
         _layout = layout;
+        _linesOverlay.Lines = layout.Lines;
+        _linesOverlay.TableWidthMm = layout.Width;
+        _linesOverlay.HeaderBackground = HeaderBackground;
+        _linesOverlay.HeaderRows = HeaderSpans(layout);
         for (var r = 0; r < Model.RowCount && r < _grid.RowDefinitions.Count; r++)
             _grid.RowDefinitions[r].Height = new GridLength((layout.RowEdges[r + 1] - layout.RowEdges[r]) * PxPerMm);
 
@@ -360,5 +360,22 @@ internal sealed partial class TableEditorWindow : Window
 
         // Высота строки могла вырасти под текст — поле высоты показывает фактическую.
         UpdateSizeBoxes();
+    }
+
+    /// <summary>Интервалы строк заголовков (мм от верха таблицы) для заливки — смежные строки склеиваются.</summary>
+    private List<(double TopMm, double BottomMm)> HeaderSpans(TableLayout layout)
+    {
+        var spans = new List<(double TopMm, double BottomMm)>();
+        for (var r = 0; r < Model.RowCount; r++)
+        {
+            if (!Model.IsHeaderRow(r))
+                continue;
+            if (spans.Count > 0 && Math.Abs(spans[^1].BottomMm - layout.RowEdges[r]) < 1e-9)
+                spans[^1] = (spans[^1].TopMm, layout.RowEdges[r + 1]);
+            else
+                spans.Add((layout.RowEdges[r], layout.RowEdges[r + 1]));
+        }
+
+        return spans;
     }
 }

@@ -13,6 +13,15 @@ public class TextWrapperTests
             .ToArray();
 
     [Fact]
+    public void Wrap_PreservesSpacesAtExplicitLineEnds()
+    {
+        var cell = TableCell.FromText("  ab   \ncd  ", italic: false);
+        Assert.Equal(new[] { "  ab   ", "cd  " }, Lines(cell, 100));
+        Assert.Equal(new[] { "  ab   ", "cd  " },
+            TextWrapper.Wrap(cell, Style, 100, null).Select(l => string.Concat(l.Select(r => r.Text))));
+    }
+
+    [Fact]
     public void Wrap_BreaksAtSpacesAndDropsTrailingSpaces()
     {
         // 5 мм на символ, ширина 30 мм — 6 символов в строке.

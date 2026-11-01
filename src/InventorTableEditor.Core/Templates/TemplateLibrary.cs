@@ -89,8 +89,9 @@ public sealed class TemplateLibrary
         var copy = TableModel.FromJson(model.ToJson());
         copy.Editor = null;
         AtomicFile.WriteAllText(path, copy.ToJson());
-        // Тот же шаблон с именем в другом регистре (на диске с учётом регистра) — старый файл не нужен.
-        if (existing?.FilePath is { } oldPath && oldPath != path && File.Exists(oldPath))
+        // Тот же шаблон с именем в другом регистре: старый файл не нужен, но на регистронезависимом
+        // диске (Windows) старое имя — это уже записанный новый файл, удалять его нельзя.
+        if (existing?.FilePath is { } oldPath && !SameFileOnDisk(oldPath, path))
             File.Delete(oldPath);
         return new TableTemplate(name, BuiltIn: false, path);
     }
@@ -150,6 +151,35 @@ public sealed class TemplateLibrary
         if (ReservedNames.Contains(name.Split('.')[0], StringComparer.OrdinalIgnoreCase))
             return $"Имя «{name}» зарезервировано Windows.";
         return null;
+    }
+
+    /// <summary>
+    /// Один ли это файл на этом диске. Имена, совпадающие без учёта регистра, на регистронезависимом
+    /// диске (Windows) — один файл, на регистрозависимом (Linux) — два разных. При сомнении считаем
+    /// одним, чтобы не удалить только что записанный файл.
+    /// </summary>
+    private static bool SameFileOnDisk(string oldPath, string newPath)
+    {
+        if (string.Equals(oldPath, newPath, StringComparison.Ordinal))
+            return true;
+        var oldName = Path.GetFileName(oldPath);
+        var newName = Path.GetFileName(newPath);
+        if (!string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var directory = Path.GetDirectoryName(newPath);
+        if (string.IsNullOrEmpty(directory) || !System.IO.Directory.Exists(directory))
+            return false;
+        try
+        {
+            return System.IO.Directory.EnumerateFiles(directory)
+                .Select(Path.GetFileName)
+                .Where(name => string.Equals(name, oldName, StringComparison.OrdinalIgnoreCase))
+                .All(name => string.Equals(name, newName, StringComparison.Ordinal));
+        }
+        catch (IOException)
+        {
+            return true;
+        }
     }
 
     private TableTemplate? UserTemplate(string name) =>

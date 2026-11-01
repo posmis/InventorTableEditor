@@ -31,7 +31,7 @@ internal static class ThemeLoader
     {
         var theme = Load();
         window.Resources.MergedDictionaries.Add(theme);
-        window.FontFamily = new FontFamily("Segoe UI");
+        window.FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI");
         window.FontSize = 12;
         window.Background = (Brush)theme["WindowBrush"];
         window.Foreground = (Brush)theme["TextBrush"];
